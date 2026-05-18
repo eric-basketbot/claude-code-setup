@@ -1,0 +1,39 @@
+# <Project Name> — Claude Memory
+
+> **How to use:** Each topic has its own folder with atomic notes. Add new memories under the right folder, then add a one-line pointer to this index. Keep total index under 200 lines (auto-load cap).
+
+## User
+
+- (1-line facts about you that change how Claude should work with you)
+- See [user/](user/) for behavioral preferences
+
+## Quick Reference (always-apply facts)
+
+- (Cross-cutting facts that should ALWAYS be in context. Examples:)
+- **Default branch**: `main`
+- **Production URL**: `<your-domain>`
+- **DB**: (driver, version, conn-string shape)
+- **Test command**: `<your test command>` — must pass before commit
+- **Deploy**: `<your deploy script or workflow>`
+
+## Universal Rules (cross-cutting, always apply)
+
+> One line each, link to the topic file under the right folder. Add new rules here as they accumulate.
+
+- [Example rule](infrastructure/example-rule.md) — one-line hook with the punchline
+
+## Topics (drill-in)
+
+- [User preferences](user/) — how to communicate, format, defer
+- [Feedback log](feedback/) — corrections + validated approaches with `Why` and `How to apply`
+- [Project state](project/) — current initiatives, deadlines, decisions
+- [Infrastructure](infrastructure/) — VPS, DB, deploy, env quirks
+- [Frontend](frontend/) — UI conventions, framework gotchas
+- [Testing](testing/) — test patterns, flaky quarantine notes
+- [Security](security/) — auth, crypto, PII handling
+- [Reference](reference/) — pointers to external systems
+- [Completed](completed/) — archived initiatives, kept for context
+
+---
+
+_The audit hook (`~/.claude/hooks/memory_health_audit.py`) writes its report to `meta/memory_health_report.md` every 12 hours. Run `python3 ~/.claude/hooks/memory_health_audit.py` (no flag) for a dry-run report any time._

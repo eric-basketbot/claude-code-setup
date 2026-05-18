@@ -1,0 +1,60 @@
+{
+  "_comment": "This fragment is merged into ~/.claude/settings.json by install.sh. It only wires the 4 JS + 2 Python hooks that ship in this repo. Plugin-based hooks (hookify, security-guidance, ralph-wiggum, etc.) are NOT included here — install those plugins separately via `/plugin install` or marketplace. The placeholder __HOME__ is expanded by install.sh to your actual $HOME.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node __HOME__/.claude/hooks/cc-write-injection-guard.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node __HOME__/.claude/hooks/cc-context-monitor.js",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node __HOME__/.claude/hooks/cc-read-injection-scanner.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/hooks/session_snapshot.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 __HOME__/.claude/hooks/precompact_session_log.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

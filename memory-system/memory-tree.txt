@@ -1,0 +1,31 @@
+# Recommended memory directory layout, drawn from a working setup.
+# Each top-level dir holds atomic notes (one fact/feedback per file).
+# install.sh's --bootstrap-memory mode creates this skeleton for the
+# project you point it at, copies MEMORY.md.template into place as
+# MEMORY.md, and leaves the rest for you to fill in over time.
+#
+# Required by Claude's built-in memory system: MEMORY.md is the index;
+# atomic notes live in subdirs and are referenced from MEMORY.md by
+# relative path. The audit hook (memory_health_audit.py) keys lifecycle
+# decisions on whether a file is referenced from MEMORY.md.
+
+memory/
+├── MEMORY.md                # index — auto-loaded by Claude every session
+├── meta/                    # session logs, snapshots, audit reports
+│   ├── session_log.md       # one-line breadcrumb per session (precompact/snapshot hooks write here)
+│   ├── memory_cleanup_log.md   # audit hook writes every mutation here
+│   ├── memory_health_report.md # audit hook writes report here every run
+│   └── session_snapshots/   # rolling 15-min snapshots from session_snapshot.py
+├── user/                    # facts about YOU — preferences, role, expertise, never-archive
+├── feedback/                # corrections + validated approaches — rule + Why + How-to-apply
+├── project/                 # ongoing work, deadlines, decisions with abs-date timestamps
+├── reference/               # pointers to external systems (dashboards, project trackers, channels)
+├── infrastructure/          # production gotchas, env quirks, deploy lore
+├── testing/                 # test conventions, flaky-test quarantine notes
+├── frontend/                # UI lessons, framework gotchas
+├── security/                # auth/crypto/PII decisions and incidents
+└── completed/               # archived initiatives — protected from auto-quarantine
+
+# memory-repository/ (sibling of memory/, NOT inside it)
+# Created by the audit hook on first --apply run. Holds quarantined files
+# for REPO_KEEP_DAYS (180) before permanent deletion. Recovery: cp back into memory/.

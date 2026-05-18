@@ -1,0 +1,34 @@
+# Multi-session worktree harness
+
+> Paste this section into your project's `CLAUDE.md`. It documents the rule that the harness scripts under `scripts/claude-hooks/` enforce. The model reads `CLAUDE.md` every session and will follow the rule once installed.
+
+## Parallel sessions — Claude never edits canonical
+
+**Architectural rule:** Claude sessions never edit `<your-project-root>` directly. Canonical exists for your IDE and manual git ops only. Every Claude session — first, fifth, resumed — works in a worktree.
+
+The harness enforces this:
+
+1. **SessionStart hook** (`scripts/claude-hooks/auto-worktree.sh`) auto-creates `/tmp/${PROJECT_SLUG}-auto-<date>-<pid>` on every session in canonical and instructs the model to `cd` there. Symlinks `node_modules`, `.env`, `.env.local`, build output dirs, etc. from canonical so build/test/dev work in the worktree without reinstalling.
+2. **PreToolUse hook** (`scripts/claude-hooks/track-git-cwd.sh`) blocks `git add` / `commit` / `cherry-pick` / `reset --hard` / `restore` / `rebase` / `merge` / `stash` / `rm` in canonical with exit code 2 when ≥2 sessions are alive. The error message names the exact worktree path the session should `cd` into (read from the registry). Solo sessions get a soft warning, not a block.
+3. **PreToolUse hook** (`scripts/claude-hooks/check-remote-push.sh`) blocks `git push` to shared branches (typically `main` and your deploy targets) when local HEAD is behind remote, and blocks all `--force` / `--force-with-lease` to those branches.
+4. **SessionEnd hook** (`scripts/claude-hooks/cleanup-on-session-end.sh`) cleans the worktree on exit per a 4-state machine: clean+merged → delete; clean+unpushed → review queue; dirty → auto-stash + delete; untracked-only → move to orphan dir + delete.
+5. **Hourly idle reaper** (launchd) catches sessions that crashed without firing SessionEnd. **Daily janitor** (04:00) prunes anything older than 3 days and deletes merged `wt/auto-*` branches.
+
+### Slash commands
+
+- `/wt-sessions` — print active sessions, file overlap, review queue, stash backlog, weekly summary.
+- `/wt <slug>` — manual long-lived worktree at `../<project>-<slug>` for named feature work.
+
+### Escape hatches
+
+- `STAY_IN_CANONICAL=1 claude` — skip auto-worktree for read-only research sessions. The git-mutation block still warns.
+- Run `git push --force` etc. yourself in a terminal outside Claude when you genuinely need to bypass the push guard.
+
+### Recovery
+
+- Stashes from auto-cleanup live in canonical's stash list with messages like `auto-cleanup wt/<branch> <iso>`. Inspect with `git stash list` then `git stash show -p stash@{N}`.
+- Untracked files moved during cleanup live at `~/.claude/logs/${PROJECT_SLUG}-orphan-files/<branch>-<iso>/`. Restore with `cp -r`.
+- Branches with unpushed commits stay in the review queue at `~/.claude/logs/${PROJECT_SLUG}-review-queue.log` and the worktree is preserved — pick them up with `cd` and `git push`, or merge.
+- Use `bash scripts/claude-hooks/triage-canonical-backlog.sh` to clean canonical's working tree if it ever gets polluted (idempotent).
+
+See [scripts/claude-hooks/_lib.sh](scripts/claude-hooks/_lib.sh) for the registry / helper API.

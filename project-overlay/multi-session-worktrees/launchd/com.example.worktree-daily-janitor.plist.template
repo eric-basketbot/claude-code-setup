@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily janitor launchd job (04:00 local). Prunes worktrees older than 3 days
+  and deletes merged wt/auto-* branches.
+
+  Same substitution rules as the idle-reaper plist template.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@@LABEL@@</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>@@SCRIPT_PATH@@</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>@@STDOUT_LOG@@</string>
+
+    <key>StandardErrorPath</key>
+    <string>@@STDERR_LOG@@</string>
+</dict>
+</plist>

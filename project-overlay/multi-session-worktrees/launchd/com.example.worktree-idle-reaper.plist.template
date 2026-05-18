@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hourly idle-reaper launchd job. Catches Claude sessions that crashed without
+  firing the SessionEnd hook (orphaned worktrees + stale registry entries).
+
+  install-in-project.sh substitutes:
+    @@LABEL@@        -> com.example.<your-slug>.worktree-idle-reaper
+    @@SCRIPT_PATH@@  -> /absolute/path/to/<project>/scripts/claude-hooks/idle-reaper.sh
+    @@STDOUT_LOG@@   -> $HOME/.claude/logs/<your-slug>-idle-reaper.log
+    @@STDERR_LOG@@   -> $HOME/.claude/logs/<your-slug>-idle-reaper.err
+
+  To install (after substitution):
+    cp <output>.plist ~/Library/LaunchAgents/<your-label>.plist
+    launchctl load ~/Library/LaunchAgents/<your-label>.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@@LABEL@@</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>@@SCRIPT_PATH@@</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>@@STDOUT_LOG@@</string>
+
+    <key>StandardErrorPath</key>
+    <string>@@STDERR_LOG@@</string>
+</dict>
+</plist>
