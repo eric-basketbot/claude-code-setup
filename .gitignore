@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.~lock*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+.npm/
+
+# Backup / scratch files
+*.bak
+*.tmp
+*.log
+*.orig
+tmp/
+.tmp/
+
+# Local Claude state — never check this in
+.claude/settings.local.json
+.claude/state/
