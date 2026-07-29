@@ -1,0 +1,464 @@
+#!/opt/homebrew/bin/bash
+# kimi-review — run Moonshot's Kimi CLI (`kimi`) headlessly as a READ-ONLY,
+# grounded reviewer/planner. This is the Moonshot leg of the cross-vendor review +
+# planning gate (see ~/.claude/rules/codex-adversarial-review.md). Modeled on
+# agy-review (the retired Google/Antigravity leg — Gemini was removed from the
+# panel 2026-07-17 and replaced by Kimi).
+#
+# WHY THIS EXISTS
+#   The user subscribed to Kimi (Kimi Code, OAuth via `kimi login`) on 2026-07-17
+#   and directed that Kimi replace Gemini on the adversarial-review panel.
+#   kimi-cli is installed at ~/.local/bin/kimi (v1.49.0 at wiring time) via the
+#   official installer: curl -LsSf https://code.kimi.com/install.sh | bash
+#
+# SAFETY MODEL (read this before editing)
+#   `kimi --print` is an AGENT with write + shell tools. Print mode implicitly
+#   enables afk mode: ALL tool calls are auto-approved, so headless Kimi can edit
+#   files on disk without asking. There is no documented read-only flag.
+#
+#   So we isolate by PROCESS, not policy: run `kimi` inside a DISPOSABLE git
+#   worktree checked out at the repo's current state, replicate the uncommitted
+#   working tree into it (so the reviewer reads the exact code under review —
+#   grounding), run the review, then delete the worktree. Any edits Kimi makes
+#   die with the worktree. The real worktree is never touched. Worktree
+#   create+destroy is ~1s (shares .git).
+#
+# MODEL
+#   Default is the account's configured default model (~/.kimi/config.toml, set
+#   by `kimi login` from the subscription — K-series). Pass --model to override;
+#   `kimi -m` takes the model name string.
+#
+# AUTH GOTCHA
+#   Unauthenticated `kimi --print` prints "LLM not set" and exits 0 (verified
+#   2026-07-17) — so we grep the output and fail loudly with exit 4 rather than
+#   handing the gate a silent empty "review".
+#
+# USAGE
+#   kimi-review [--model "<name>"] [--repo <path>] [--timeout <secs>] -p "<prompt>"
+#   printf '%s' "<prompt>" | kimi-review            # prompt via stdin
+#
+#   ⚠️  -p AND piped stdin are MUTUALLY EXCLUSIVE (exit 2). There is no separate
+#   "diff" channel: the diff must be embedded INTO the prompt text. Before
+#   2026-07-25 this wrapper silently DISCARDED piped stdin whenever -p was given,
+#   so `git show X | kimi-review -p "review this"` produced a confident review of
+#   the repo at HEAD instead of X — the wrong target, with no warning. Now it
+#   fails loudly instead.
+#
+# LARGE-CONTEXT HANDLING (measured 2026-07-25 — see the timeouts memory)
+#   Kimi review latency scales badly with prompt size, and this is a TIME problem,
+#   not a model problem: this account's default_model is already `kimi-code/k3`, so
+#   the observed hangs happened ON K3. Measurements (all K3):
+#     10KB → ~4min OK  |  30KB → timed out at 420s once, finished in 388s next
+#     74KB → 0 bytes at 600s, but exit 0 (full review) at 900s
+#   i.e. the failures were the timeout being too tight, plus real run-to-run
+#   variance right at the boundary. So this wrapper now:
+#     1. scales the default timeout with prompt size (600/900/1200s) — the main fix,
+#     2. on a timeout, retries by SLICING the diff on `diff --git` boundaries and
+#        concatenating the per-slice reviews (a degraded but non-empty review beats
+#        a dead panel leg),
+#     3. pins KIMI_REVIEW_BIG_MODEL for big prompts ONLY when default_model isn't
+#        already that model — a safety net if the default is ever pointed back at a
+#        small-context model, not the primary mechanism.
+#
+# ENV KNOBS
+#   KIMI_REVIEW_MODEL       pin a model (disables auto-escalation)
+#   KIMI_REVIEW_TIMEOUT     pin timeout secs (disables size scaling)
+#   KIMI_REVIEW_BIG_BYTES   auto-escalate threshold (default 12000)
+#   KIMI_REVIEW_BIG_MODEL   model used above that threshold (default kimi-code/k3)
+#   KIMI_REVIEW_SLICE       1=enable slice-on-timeout fallback (default 1)
+#   KIMI_REVIEW_SLICE_BYTES max bytes of diff per slice (default 60000)
+#   KIMI_REVIEW_TOTAL_CAP   HARD ceiling for the whole invocation (default 1800s)
+#   KIMI_REVIEW_SLICE_BUDGET override the derived slicing budget (rarely needed)
+#   KIMI_API_FALLBACK       1=retry exact managed-quota exhaustion on paid API
+#   KIMI_API_BIN            native Kimi Code binary for the paid API rung
+#   KIMI_API_KEY_SERVICE    macOS Keychain service for the Open Platform key
+#   KIMI_API_BASE_URL       paid API endpoint (default https://api.moonshot.ai/v1)
+#   KIMI_API_MODEL_NAME     paid API model (default kimi-k3)
+#
+# TIME BUDGET (why these numbers)
+#   Measured latencies: 10KB ≈ 4min, 30KB ≈ 6.5min (one run exceeded 7min), 74KB
+#   needed >600s once and ~900s another time — high run-to-run variance. So the
+#   first attempt gets 600/900/1200s by size, and the WHOLE invocation is capped
+#   at KIMI_REVIEW_TOTAL_CAP (default 30min) with the slice budget derived from
+#   what's left. Typical run: 4–8 min. Worst case: the cap, hard.
+#   ⚠️ The ">5 min reviewer hang → kill" rule in codex-adversarial-review.md
+#   PREDATES these measurements — killing this wrapper at 5 min aborts healthy
+#   large-diff reviews. Let it self-bound; it always terminates.
+#
+# EXIT CODES
+#   0  success, FULL coverage (review on stdout)
+#   65 PARTIAL coverage — slicing reviewed only some slices; output opens with a
+#      COVERAGE/INCOMPLETE banner. Treat as DEGRADED, never as a clean review.
+#   2  usage error   4  not authenticated
+#   124 timeout, and slicing recovered nothing   127 kimi binary missing
+#   *  kimi's own exit code otherwise
+set -uo pipefail
+
+KIMI="${KIMI_BIN:-$HOME/.local/bin/kimi}"
+KIMI_API_BIN="${KIMI_API_BIN:-$HOME/.kimi-code/bin/kimi}"
+MODEL="${KIMI_REVIEW_MODEL:-}"
+API_FALLBACK="${KIMI_API_FALLBACK:-1}"
+API_KEY_SERVICE="${KIMI_API_KEY_SERVICE:-ai-config.kimi.MOONSHOT_API_KEY}"
+API_BASE_URL="${KIMI_API_BASE_URL:-https://api.moonshot.ai/v1}"
+API_MODEL_NAME="${KIMI_API_MODEL_NAME:-kimi-k3}"
+API_CONTEXT_SIZE="${KIMI_API_CONTEXT_SIZE:-1048576}"
+API_CAPABILITIES="${KIMI_API_CAPABILITIES:-thinking,image_in,video_in,tool_use}"
+KIMI_RUNTIME_MODE="managed"
+PAID_API_KEY=""
+API_FALLBACK_USED=0
+REPO=""
+TIMEOUT="${KIMI_REVIEW_TIMEOUT:-}"
+PROMPT=""
+PROMPT_SET=0    # was -p supplied? (distinguishes `-p ""` from "not supplied")
+KIMI_PID=""     # pid of the running kimi child (for signal-safe teardown)
+_CLEANED=0      # guard so cleanup runs at most once
+
+# Size-aware model/timeout + slicing knobs. MODEL_EXPLICIT/TIMEOUT_EXPLICIT record
+# whether the CALLER chose a value; auto-escalation must never override an explicit
+# pin (a caller pinning K2.7 to reproduce a bug has to actually get K2.7).
+BIG_BYTES="${KIMI_REVIEW_BIG_BYTES:-12000}"
+BIG_MODEL="${KIMI_REVIEW_BIG_MODEL:-kimi-code/k3}"
+SLICE_ENABLED="${KIMI_REVIEW_SLICE:-1}"
+SLICE_BYTES="${KIMI_REVIEW_SLICE_BYTES:-60000}"
+# HARD ceiling for the WHOLE invocation (first attempt + all slices). Without it
+# the first attempt (up to 1200s) and the slice budget stacked into a ~40min worst
+# case. The slice budget is derived from whatever is left of this cap, so total
+# wall clock is bounded and predictable for the gate.
+TOTAL_CAP="${KIMI_REVIEW_TOTAL_CAP:-1800}"
+MODEL_EXPLICIT=0;   [ -n "$MODEL" ]   && MODEL_EXPLICIT=1
+TIMEOUT_EXPLICIT=0; [ -n "$TIMEOUT" ] && TIMEOUT_EXPLICIT=1
+SLICE_OK=0; SLICE_TOTAL=0   # set by slice_and_review; pre-init for `set -u`
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model)   MODEL="${2:-}"; MODEL_EXPLICIT=1; shift 2 ;;
+    --repo)    REPO="${2:-}"; shift 2 ;;
+    --timeout) TIMEOUT="${2:-}"; TIMEOUT_EXPLICIT=1; shift 2 ;;
+    -p|--prompt) PROMPT="${2:-}"; PROMPT_SET=1; shift 2 ;;
+    -h|--help)
+      sed -n '2,75p' "$0"; exit 0 ;;
+    *) echo "[kimi-review] unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+# ---- Prompt resolution: -p and piped stdin are MUTUALLY EXCLUSIVE ----
+# Read stdin whenever it isn't a tty. `< /dev/null` (what most callers pass) hits
+# EOF immediately, so this does not block. Reading it unconditionally is what lets
+# us DETECT the -p + pipe collision instead of silently dropping the pipe.
+STDIN_DATA=""
+if [ ! -t 0 ]; then STDIN_DATA="$(cat)"; fi
+
+if [ "$PROMPT_SET" = 1 ] && [ -n "${STDIN_DATA//[$' \t\r\n']/}" ]; then
+  cat >&2 <<'EOM'
+[kimi-review] REFUSING: both -p and piped stdin carry content.
+  There is no separate "diff" input channel — stdin IS the prompt, and only when
+  -p is absent. Passing both means one of them is silently ignored, which
+  historically produced confident reviews of the WRONG code.
+  Fix: embed the diff INTO the prompt and pass exactly one of:
+    printf '%s\n\nDIFF:\n%s' "$REVIEW_PROMPT" "$(cat diff.patch)" | kimi-review
+    kimi-review -p "$REVIEW_PROMPT_INCLUDING_DIFF" < /dev/null
+EOM
+  exit 2
+fi
+
+[ "$PROMPT_SET" = 1 ] || PROMPT="$STDIN_DATA"
+if [ -z "${PROMPT//[$' \t\r\n']/}" ]; then echo "[kimi-review] empty prompt" >&2; exit 2; fi
+
+# ---- Validate an explicitly pinned model BEFORE burning a run ----
+# GOTCHA: kimi needs the NAMESPACED id (`kimi-code/k3`, not `k3`). A bare/unknown
+# id makes kimi print "LLM not set" and exit 0 — indistinguishable from an auth
+# failure, so the gate gets told to run `kimi login` when the real problem is a
+# typo'd --model. Catch it here instead.
+KIMI_CFG="$HOME/.kimi/config.toml"
+if [ -n "$MODEL" ] && [ -r "$KIMI_CFG" ]; then
+  if ! grep -qF "[models.\"$MODEL\"]" "$KIMI_CFG"; then
+    { echo "[kimi-review] unknown model id: '$MODEL'"
+      echo "  kimi requires the NAMESPACED id. Valid ids in $KIMI_CFG:"
+      sed -n 's/^\[models\."\(.*\)"\]$/    \1/p' "$KIMI_CFG"
+      echo "  (an unknown id would surface as a bogus 'not authenticated' failure)"
+    } >&2
+    exit 2
+  fi
+fi
+
+# ---- Size-aware model + timeout ----
+# NOTE (measured 2026-07-25): large-context slowness is the real failure mode, and
+# it is NOT fixed by switching models — the account default_model here is ALREADY
+# kimi-code/k3, so the 30KB/74KB hangs happened ON K3. A 30KB prompt timed out at
+# 420s once and completed in 388s the next run; 74KB failed at 600s and succeeded
+# at 900s. The effective fixes are the size-scaled TIMEOUT below and the slicing
+# fallback. The escalation here is only a safety net for the case where
+# default_model is pointed back at a small-context model (e.g. K2.7).
+PROMPT_BYTES=${#PROMPT}
+DEFAULT_MODEL=""
+[ -r "$KIMI_CFG" ] && DEFAULT_MODEL="$(sed -n 's/^default_model[[:space:]]*=[[:space:]]*"\(.*\)"$/\1/p' "$KIMI_CFG" | head -1)"
+if [ "$MODEL_EXPLICIT" = 0 ] && [ "$PROMPT_BYTES" -ge "$BIG_BYTES" ] && [ "$DEFAULT_MODEL" != "$BIG_MODEL" ]; then
+  MODEL="$BIG_MODEL"
+  echo "[kimi-review] prompt ${PROMPT_BYTES}B >= ${BIG_BYTES}B and default is '${DEFAULT_MODEL:-unknown}' — pinning $BIG_MODEL for large context" >&2
+fi
+if [ "$TIMEOUT_EXPLICIT" = 0 ]; then
+  if   [ "$PROMPT_BYTES" -ge 50000 ]; then TIMEOUT=1200
+  elif [ "$PROMPT_BYTES" -ge "$BIG_BYTES" ]; then TIMEOUT=900
+  else TIMEOUT=600
+  fi
+fi
+
+[ -x "$KIMI" ] || { echo "[kimi-review] kimi not found at $KIMI — install: curl -LsSf https://code.kimi.com/install.sh | bash" >&2; exit 127; }
+
+# Bound each run if GNU timeout is available (kimi has no built-in print timeout).
+# Built per-call so slices can carry a shorter bound than the whole-diff attempt.
+timeout_runner() { # $1 = seconds -> echoes nothing, sets RUNNER
+  RUNNER=()
+  if command -v gtimeout >/dev/null 2>&1; then RUNNER=(gtimeout "$1")
+  elif command -v timeout >/dev/null 2>&1; then RUNNER=(timeout "$1")
+  fi
+}
+RUNNER=()
+timeout_runner "$TIMEOUT"
+
+load_paid_api_key() {
+  if [ -n "${KIMI_API_KEY:-}" ]; then
+    PAID_API_KEY="$KIMI_API_KEY"
+  elif command -v security >/dev/null 2>&1; then
+    PAID_API_KEY="$(security find-generic-password -a "$(id -un)" -s "$API_KEY_SERVICE" -w 2>/dev/null || true)"
+  fi
+  [ -n "$PAID_API_KEY" ]
+}
+
+managed_quota_exhausted() { # $@ = files to inspect
+  grep -qiE 'reached your usage limit|usage limit for this billing cycle|monthly usage limit|quota exceeded|access_terminated_error' "$@" 2>/dev/null
+}
+
+run_kimi() { # $1 = working dir, $2 = prompt text (default $PROMPT), $3 = timeout override
+  local text="${2-$PROMPT}"
+  timeout_runner "${3-$TIMEOUT}"
+  local args=(--quiet -p "$text")
+  [ -n "$MODEL" ] && args=(-m "$MODEL" "${args[@]}")
+  # Run kimi in the BACKGROUND and wait on it, so if this wrapper is signalled
+  # (orchestration timeout / parallel-agent cancellation) the trap can kill the
+  # kimi child BEFORE its working dir is deleted. Otherwise the orphaned kimi
+  # calls os.getcwd() on a removed cwd and dies with FileNotFoundError, which the
+  # review gate reports as an "internal error".
+  if [ "$KIMI_RUNTIME_MODE" = "api" ]; then
+    ( cd "$1" && exec env \
+        KIMI_MODEL_BASE_URL="$API_BASE_URL" \
+        KIMI_MODEL_API_KEY="$PAID_API_KEY" \
+        KIMI_MODEL_NAME="$API_MODEL_NAME" \
+        KIMI_MODEL_MAX_CONTEXT_SIZE="$API_CONTEXT_SIZE" \
+        KIMI_MODEL_CAPABILITIES="$API_CAPABILITIES" \
+        "${RUNNER[@]}" "$KIMI_API_BIN" -p "$text" ) < /dev/null &
+  else
+    ( cd "$1" && exec "${RUNNER[@]}" "$KIMI" "${args[@]}" ) < /dev/null &
+  fi
+  KIMI_PID=$!
+  wait "$KIMI_PID"
+}
+
+# Resolve repo root for grounding.
+[ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/kimi-review.XXXXXX")"
+OUT="$WORK/out"; ERR="$WORK/err"
+WT=""
+
+# Signal-safe teardown. On a signal (orchestration timeout / cancellation) we
+# must KILL AND REAP the kimi child BEFORE deleting its worktree, or the orphaned
+# kimi crashes on os.getcwd() (FileNotFoundError) — the "internal error" the gate
+# sees. Runs at most once (EXIT + the signals that would otherwise skip EXIT).
+# shellcheck disable=SC2329 # invoked indirectly by the traps immediately below
+cleanup() {
+  [ "$_CLEANED" = 1 ] && return 0
+  _CLEANED=1
+  if [ -n "$KIMI_PID" ] && kill -0 "$KIMI_PID" 2>/dev/null; then
+    kill -TERM "$KIMI_PID" 2>/dev/null || true
+    n=0; while kill -0 "$KIMI_PID" 2>/dev/null && [ "$n" -lt 15 ]; do sleep 0.2; n=$((n+1)); done
+    kill -KILL "$KIMI_PID" 2>/dev/null || true
+    wait "$KIMI_PID" 2>/dev/null || true
+  fi
+  [ -n "$WT" ] && git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || true
+  [ -n "$REPO" ] && git -C "$REPO" worktree prune >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+trap 'cleanup; exit 143' INT TERM HUP
+
+# ---- Slice-on-timeout fallback ----
+# A whole-diff review that times out yields NOTHING, which takes the panel leg
+# down. Splitting the diff on `diff --git` boundaries and reviewing each slice
+# against the SAME grounded worktree yields a degraded-but-real review. Degraded
+# how: each slice sees only its own files, so no cross-file/cross-slice reasoning
+# — the caller is told, and the slice headers make the seams visible.
+# Returns 0 and rewrites $OUT on success; 1 if slicing isn't possible/helpful.
+slice_and_review() {
+  local pf="$WORK/prompt.txt" sd="$WORK/slices" preamble="$WORK/preamble.txt"
+  printf '%s' "$PROMPT" > "$pf"
+
+  local firstln
+  firstln="$(grep -n '^diff --git ' "$pf" 2>/dev/null | head -1 | cut -d: -f1)"
+  [ -n "$firstln" ] || { echo "[kimi-review] no 'diff --git' sections — cannot slice" >&2; return 1; }
+  mkdir -p "$sd" || return 1
+
+  # Everything before the first file-diff is the instruction preamble; it must be
+  # repeated on every slice or the slices lose the review stance and severity rubric.
+  if [ "$firstln" -gt 1 ]; then head -n "$((firstln - 1))" "$pf" > "$preamble"; else : > "$preamble"; fi
+
+  tail -n +"$firstln" "$pf" | awk -v dir="$sd" '
+    /^diff --git / { n++; f = sprintf("%s/part-%05d", dir, n) }
+    n > 0 { print >> f }
+  ' || return 1
+
+  local parts=( "$sd"/part-* )
+  [ -e "${parts[0]}" ] || return 1
+  local total="${#parts[@]}"
+  # One file-diff can't be split any further by this strategy — slicing would just
+  # re-run the identical prompt and time out again.
+  [ "$total" -ge 2 ] || { echo "[kimi-review] only 1 file-diff — slicing cannot help" >&2; return 1; }
+
+  # Pack file-diffs into chunks under the byte budget (a single oversized
+  # file-diff becomes its own chunk rather than being dropped).
+  local cidx=1 curfile cursize=0 p psize
+  curfile="$(printf '%s/chunk-%03d' "$sd" "$cidx")"; : > "$curfile"
+  for p in "${parts[@]}"; do
+    psize="$(wc -c < "$p" | tr -d ' ')"
+    if [ "$cursize" -gt 0 ] && [ "$((cursize + psize))" -gt "$SLICE_BYTES" ]; then
+      cidx="$((cidx + 1))"; curfile="$(printf '%s/chunk-%03d' "$sd" "$cidx")"; : > "$curfile"; cursize=0
+    fi
+    cat "$p" >> "$curfile"; cursize="$((cursize + psize))"
+  done
+
+  # Slices are much smaller than the whole diff, so they get a tighter bound; and
+  # the whole fallback gets a TOTAL budget so a bad day can't turn one review into
+  # an unbounded serial crawl (the caller's reviewer-kill rule still has to hold).
+  local slice_tmo=$(( TIMEOUT / 2 )); [ "$slice_tmo" -lt 300 ] && slice_tmo=300
+  # Budget = whatever remains of the total cap after the failed first attempt, so
+  # first-attempt + slicing can never exceed TOTAL_CAP. Explicit override wins.
+  local budget started="$SECONDS"
+  if [ -n "${KIMI_REVIEW_SLICE_BUDGET:-}" ]; then
+    budget="$KIMI_REVIEW_SLICE_BUDGET"
+  else
+    budget=$(( TOTAL_CAP - SECONDS ))
+    [ "$budget" -lt 300 ] && budget=300
+  fi
+  # Never let one slice overrun the remaining budget.
+  [ "$slice_tmo" -gt "$budget" ] && slice_tmo="$budget"
+
+  echo "[kimi-review] slicing $total file-diff(s) into $cidx slice(s); ${slice_tmo}s each, ${budget}s total budget" >&2
+  local i cf sp rcx okc=0
+  : > "$WORK/sliced"
+  for i in $(seq 1 "$cidx"); do
+    if [ "$(( SECONDS - started ))" -ge "$budget" ]; then
+      printf '\n\n===== SLICE %d/%d =====\n(NOT ATTEMPTED — %ss slice budget exhausted)\n' "$i" "$cidx" "$budget" >> "$WORK/sliced"
+      continue
+    fi
+    cf="$(printf '%s/chunk-%03d' "$sd" "$i")"
+    sp="$(printf '%s\n\n[SLICE %d of %d — this is a SUBSET of the full diff. Review only the files present here. Do NOT claim the whole change is clean; other files are reviewed separately.]\n\n%s' \
+          "$(cat "$preamble")" "$i" "$cidx" "$(cat "$cf")")"
+    run_kimi "$RUNDIR" "$sp" "$slice_tmo" >"$WORK/sout" 2>"$WORK/serr"; rcx=$?
+    {
+      printf '\n\n===== SLICE %d/%d =====\n' "$i" "$cidx"
+      if [ "$rcx" = 0 ] && [ -s "$WORK/sout" ]; then
+        okc=$(( okc + 1 )); cat "$WORK/sout"
+      elif [ "$rcx" = 124 ]; then
+        printf '(slice %d TIMED OUT after %ss — NOT reviewed)\n' "$i" "$slice_tmo"
+      else
+        printf '(slice %d FAILED, exit %s — NOT reviewed)\n' "$i" "$rcx"
+      fi
+    } >> "$WORK/sliced"
+  done
+
+  [ "$okc" -gt 0 ] || return 1
+
+  # COVERAGE BANNER — a partial review must never be mistaken for a clean one.
+  # This is the same failure shape as CodeRabbit's --include-untracked lesson:
+  # a gate reporting "clean" on an incomplete diff is worse than a gate that fails.
+  { printf '===== KIMI REVIEW COVERAGE: %d of %d slice(s) reviewed =====\n' "$okc" "$cidx"
+    if [ "$okc" -lt "$cidx" ]; then
+      printf 'INCOMPLETE: %d slice(s) were NOT reviewed (see markers below). Findings here\ncover only part of the diff — absence of findings is NOT evidence of clean.\n' "$(( cidx - okc ))"
+    fi
+    cat "$WORK/sliced"
+  } > "$OUT"
+
+  SLICE_OK="$okc"; SLICE_TOTAL="$cidx"
+  [ "$okc" -eq "$cidx" ] && return 0
+  return 65   # partial coverage — caller must treat the leg as DEGRADED, not clean
+}
+
+RUNDIR=""   # the dir the review actually ran in — reused by the slicing fallback
+
+if [ -z "$REPO" ] || [ ! -d "$REPO" ]; then
+  # No git context — run diff-only in a throwaway dir (no grounding, but safe).
+  echo "[kimi-review] no git repo detected — running diff-only (no grounding)" >&2
+  RUNDIR="$WORK"
+  run_kimi "$WORK" >"$OUT" 2>"$ERR"; rc=$?
+else
+  base="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$base" ]; then echo "[kimi-review] cannot resolve HEAD in $REPO" >&2; rm -rf "$WORK"; exit 1; fi
+  # Unique leaf name → unique .git/worktrees/<name> admin entry, so concurrent
+  # kimi-review runs from parallel sessions never share/clobber the same 'wt' entry.
+  WT="$WORK/wt-$$"
+
+  if git -C "$REPO" worktree add --quiet --detach "$WT" "$base" 2>"$WORK/wterr"; then
+    # Replicate UNCOMMITTED working state into the disposable worktree so the reviewer
+    # reads the exact code under review. Empty delta (clean tree) = no-op → correct for
+    # all scopes (uncommitted, branch-vs-base, single-commit).
+    PATCH="$WORK/uncommitted.patch"
+    git -C "$REPO" diff HEAD >"$PATCH" 2>/dev/null || true
+    [ -s "$PATCH" ] && git -C "$WT" apply --whitespace=nowarn "$PATCH" 2>/dev/null || true
+    git -C "$REPO" ls-files --others --exclude-standard -z 2>/dev/null | while IFS= read -r -d '' f; do
+      mkdir -p "$WT/$(dirname "$f")" 2>/dev/null && cp "$REPO/$f" "$WT/$f" 2>/dev/null || true
+    done
+    RUNDIR="$WT"
+    run_kimi "$WT" >"$OUT" 2>"$ERR"; rc=$?
+  else
+    echo "[kimi-review] worktree add failed — falling back to diff-only (no grounding)" >&2
+    cat "$WORK/wterr" >&2 || true
+    RUNDIR="$WORK"
+    run_kimi "$WORK" >"$OUT" 2>"$ERR"; rc=$?
+  fi
+fi
+
+# The managed Kimi Code subscription already spends Extra Usage automatically.
+# Only its explicit quota-exhaustion response may cross into the separately
+# billed Open Platform account. Network failures, 429s, and generic CLI errors
+# never trigger paid usage.
+if [ "$API_FALLBACK" = "1" ] && managed_quota_exhausted "$OUT" "$ERR"; then
+  if [ ! -x "$KIMI_API_BIN" ]; then
+    echo "[kimi-review] Kimi subscription and Extra Usage exhausted; native paid-API CLI not found at '$KIMI_API_BIN'." >&2
+    rc=69
+  elif load_paid_api_key; then
+    echo "[kimi-review] Kimi subscription and Extra Usage exhausted — retrying with PAID Open Platform API ($API_MODEL_NAME)." >&2
+    KIMI_RUNTIME_MODE="api"
+    API_FALLBACK_USED=1
+    run_kimi "$RUNDIR" >"$OUT" 2>"$ERR"; rc=$?
+  else
+    echo "[kimi-review] Kimi subscription and Extra Usage exhausted; paid API fallback is unavailable because Keychain service '$API_KEY_SERVICE' has no key." >&2
+    rc=69
+  fi
+fi
+
+# Don't hand a silent empty "review" to the gate on an auth failure — fail loudly.
+# "LLM not set" is what unauthenticated kimi prints, WITH EXIT CODE 0.
+if grep -qiE 'LLM not set|not logged in|please.*login|kimi login' "$OUT" "$ERR" 2>/dev/null; then
+  echo "[kimi-review] Kimi is not authenticated. Run 'kimi login' in a terminal, complete the browser OAuth, then retry." >&2
+  cat "$ERR" >&2
+  exit 4
+fi
+
+if [ "${rc:-0}" = "124" ]; then
+  echo "[kimi-review] timed out after ${TIMEOUT}s" >&2
+  if [ "$SLICE_ENABLED" = "1" ]; then
+    slice_and_review; src=$?
+    case "$src" in
+      0)  rc=0
+          echo "[kimi-review] RECOVERED via slicing (${SLICE_OK}/${SLICE_TOTAL} slices) — DEGRADED: each slice saw only its own files, so cross-file issues may be missed. Report this to the gate." >&2 ;;
+      65) rc=65
+          echo "[kimi-review] PARTIAL via slicing — only ${SLICE_OK}/${SLICE_TOTAL} slices reviewed. Exit 65: treat this leg as DEGRADED/PARTIALLY MET, NOT as a clean review. Findings cover part of the diff only." >&2 ;;
+      *)  echo "[kimi-review] slicing fallback did not produce a review — leg down" >&2 ;;
+    esac
+  fi
+fi
+
+cat "$OUT"
+cat "$ERR" >&2
+[ "$API_FALLBACK_USED" = 1 ] && echo "[kimi-review] billing source: PAID Open Platform API ($API_MODEL_NAME)" >&2
+exit "$rc"

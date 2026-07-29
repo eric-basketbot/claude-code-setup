@@ -5,7 +5,7 @@
 # Behavior:
 #   - Modified tracked files → one stash named pre-cleanup-<date>
 #   - Untracked files (excluding gitignored) → moved to
-#     ~/.claude/logs/${PROJECT_SLUG}-orphan-files/canonical-<date>/
+#     ~/.claude/logs/myproject-orphan-files/canonical-<date>/
 #   - Nothing is deleted; everything is recoverable.
 #
 # Idempotent: re-running on a clean canonical is a no-op.

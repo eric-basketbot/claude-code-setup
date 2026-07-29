@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
 """PreCompact hook — append a one-line session checkpoint to the project's session log.
 
-Reads the PreCompact event JSON from stdin. No-ops unless the cwd's project has a
-memory/ directory bootstrapped under ~/.claude/projects/<slug>/. Never blocks
-compaction: any error exits 0.
+Reads the PreCompact event JSON from stdin. No-ops unless cwd is inside the bound project.
+Never blocks compaction: any error exits 0.
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROJECTS_BASE = Path.home() / ".claude" / "projects"
+# ---- project binding -------------------------------------------------------
+# Point this at YOUR repo. Claude Code stores per-project state under
+# ~/.claude/projects/<abs-path-with-slashes-replaced-by-dashes>/, so the slug is
+# derived rather than hardcoded. Override with AI_MEMORY_PROJECT_ROOT.
+PROJECT_ROOT = Path(
+    os.environ.get("AI_MEMORY_PROJECT_ROOT", str(Path.home() / "src/your-project"))
+).expanduser()
+PROJECT_NAME = PROJECT_ROOT.name
+PROJECT_DIR = (
+    Path.home() / ".claude" / "projects" / str(PROJECT_ROOT).replace("/", "-")
+)
+MEMORY_DIR = PROJECT_DIR / "memory"
+LOG_FILE = MEMORY_DIR / "meta" / "session_log.md"
 HEADER = (
     "---\n"
     "name: Session log\n"
@@ -21,19 +33,6 @@ HEADER = (
     "scope: on-demand\n"
     "---\n\n"
 )
-
-
-def _project_slug(cwd: str) -> str:
-    return "-" + cwd.strip("/").replace("/", "-")
-
-
-def _resolve_log_file(cwd: str) -> Path | None:
-    if not cwd:
-        return None
-    memdir = PROJECTS_BASE / _project_slug(cwd) / "memory"
-    if not memdir.exists():
-        return None
-    return memdir / "meta" / "session_log.md"
 
 
 def _first_user_message(transcript_path: str) -> str:
@@ -81,8 +80,7 @@ def main() -> int:
         return 0
 
     cwd = payload.get("cwd", "") or ""
-    log_file = _resolve_log_file(cwd)
-    if log_file is None:
+    if PROJECT_NAME not in cwd:
         return 0
 
     session_id = (payload.get("session_id") or "unknown")[:8]
@@ -95,11 +93,11 @@ def main() -> int:
         topic = topic[:77] + "..."
 
     try:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        if not log_file.exists():
-            log_file.write_text(HEADER, encoding="utf-8")
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if not LOG_FILE.exists():
+            LOG_FILE.write_text(HEADER, encoding="utf-8")
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with log_file.open("a", encoding="utf-8") as f:
+        with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(f"- {ts} | session={session_id} | trigger={trigger} | topic={topic}\n")
     except Exception:
         return 0

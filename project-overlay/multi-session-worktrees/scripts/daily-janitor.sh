@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Daily 04:00 launchd job. Defense in depth on top of the hourly idle reaper.
-# - Anything still in /tmp/${PROJECT_SLUG}-auto-* older than MAX_AGE_DAYS days: cleanup
+# - Anything still in wt-auto-* (legacy /tmp/ or new WORKTREE_BASE) older
+#   than MAX_AGE_DAYS days: cleanup
 # - `git worktree prune` to drop dead worktree pointers
 # - Delete `wt/auto-*` branches that are merged into main and have no worktree
 # - Compact the registry
+#
+# Subject to the same macOS TCC limitation as idle-reaper.sh when the script
+# lives under ~/Downloads — see docs/launchd-safety-net-tcc.md.
 
 set -uo pipefail
 
@@ -18,11 +22,12 @@ bb_registry_compact || true
 NOW="$(date +%s)"
 THRESHOLD="$((NOW - MAX_AGE_DAYS * 86400))"
 
-# 1. Force-clean any /tmp/${PROJECT_SLUG}-auto-* older than MAX_AGE_DAYS.
+# 1. Force-clean any wt-auto-* worktree older than MAX_AGE_DAYS, regardless
+#    of which base directory it lives in.
 LIVE_PATHS_TMP="$(mktemp -t bb-live.XXXXXX)"
 bb_registry_live_lines | awk -F'|' '{print $2}' > "$LIVE_PATHS_TMP" 2>/dev/null || true
 
-for d in /tmp/${PROJECT_SLUG}-auto-* /private/tmp/${PROJECT_SLUG}-auto-*; do
+for d in "${WORKTREE_BASE}"/wt-auto-* /tmp/wt-auto-* /private/tmp/wt-auto-*; do
   [[ -d "$d" ]] || continue
   REAL="$(cd "$d" 2>/dev/null && pwd -P)" || continue
   ALIAS="${REAL/#\/private\/tmp/\/tmp}"

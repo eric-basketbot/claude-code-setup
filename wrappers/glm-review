@@ -1,0 +1,213 @@
+#!/opt/homebrew/bin/bash
+# glm-review — run Zhipu's GLM (via z.ai) headlessly as a READ-ONLY, grounded
+# reviewer/planner. This is the Zhipu/z.ai leg of the cross-vendor review +
+# planning gate (see ~/.claude/rules/codex-adversarial-review.md). Added 2026-07-17
+# as the 5th panelist.
+#
+# WHY THIS EXISTS
+#   The user has a z.ai (Zhipu GLM) coding-plan login + API key. z.ai exposes an
+#   ANTHROPIC-COMPATIBLE endpoint (https://api.z.ai/api/anthropic), so the cleanest
+#   way to get a GROUNDED, AGENTIC GLM reviewer is to run the local `claude` CLI
+#   pointed at z.ai with a GLM model — it reads repo files for grounding (unlike a
+#   raw diff-only API call) while running on genuinely different weights (Zhipu),
+#   which is the entire point of a cross-vendor panel.
+#
+# SAFETY MODEL (read this before editing)
+#   Two independent guards keep this read-only:
+#   1. TOOL ALLOWLIST — the nested claude gets --allowedTools "Read Grep Glob" and
+#      --disallowedTools for every mutating/external tool. With no Edit/Write/Bash,
+#      it physically cannot modify the repo or run shell commands. Unlisted tools
+#      are denied (not hung) in headless -p mode.
+#   2. EXTERNAL CWD — we run from a throwaway temp dir, NOT the repo. That means
+#      THIS repo's project hooks (auto-worktree SessionStart, git-guard PreToolUse,
+#      etc.) never load, so the reviewer can't be hijacked into creating worktrees
+#      or blocking on git guards. The repo is exposed for READING ONLY via --add-dir.
+#
+# KEY HANDLING (never in argv, never logged)
+#   Resolves the z.ai token in this order:
+#     1. $ZAI_API_KEY / $ZAI_AUTH_TOKEN if already exported (CI, one-off overrides)
+#     2. macOS Keychain, service `ai-config.<project>.ZAI_API_KEY` (the default since
+#        2026-07-25 — same storage the MCP servers use via keychain-exec.sh)
+#   The key used to live as a literal `export` in ~/.zshrc; that tripped the
+#   ai-config audit's security.config_files check (literal_credential_assignment)
+#   because a plaintext secret in a dotfile is readable by anything that can read the
+#   file and leaks into any shared/screen-shared shell profile. Keychain keeps it
+#   encrypted at rest and ACL-scoped to /usr/bin/security.
+#   This script never prints or persists the value. If neither source yields a token,
+#   we fail loudly (exit 4) rather than silently falling back to the user's real
+#   Anthropic auth (which would bill Anthropic and defeat the vendor-diversity point).
+#
+#   Re-store the key after a rotation with:
+#     security add-generic-password -a "$(id -un)" -s ai-config.<project>.ZAI_API_KEY -w -U
+#   (omit -w's value so `security` prompts — keeps it out of shell history and argv)
+#
+#   KEY FORMAT: a z.ai key is "{API Key ID}.{secret}" (the whole dotted string is one
+#   token). Export the ENTIRE string — the Anthropic-compatible endpoint takes it
+#   directly as the Bearer token; no JWT signing (that was the legacy Zhipu paas API).
+#
+# MODEL
+#   The z.ai coding Pro plan supports GLM-5.2, GLM-5-Turbo, and GLM-4.7. We default to
+#   the strongest, "glm-5.2" — billing is quota-based (prompts), so the best model
+#   costs the same quota as the weakest. Override with --model or $GLM_REVIEW_MODEL
+#   (e.g. "glm-4.7" to spend less quota per review).
+#
+# USAGE
+#   glm-review [--model <name>] [--repo <path>] [--timeout <secs>] -p "<prompt>"
+#   printf '%s' "<prompt>" | glm-review            # prompt via stdin
+#
+#   ⚠️  -p AND piped stdin are MUTUALLY EXCLUSIVE (exit 2). There is no separate
+#   "diff" channel: the diff must be embedded INTO the prompt text. Before
+#   2026-07-25 this silently DISCARDED piped stdin whenever -p was given, so
+#   `git show X | glm-review -p "review this"` produced a confident review of the
+#   repo's current state instead of X — the wrong target, with no warning.
+#   (Same defect was found and fixed in kimi-review the same day.)
+#
+# EXIT CODES
+#   0  success (review on stdout)   2  usage error   4  no key / not authenticated
+#   124 timeout (gtimeout)          127 claude binary missing
+#   *  claude's own exit code otherwise
+set -uo pipefail
+
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
+ZAI_BASE_URL="${ZAI_BASE_URL:-https://api.z.ai/api/anthropic}"
+MODEL="${GLM_REVIEW_MODEL:-glm-5.2}"
+REPO=""
+TIMEOUT="${GLM_REVIEW_TIMEOUT:-600}"
+PROMPT=""
+PROMPT_SET=0    # was -p supplied? (distinguishes `-p ""` from "not supplied")
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model)   MODEL="${2:-}"; shift 2 ;;
+    --repo)    REPO="${2:-}"; shift 2 ;;
+    --timeout) TIMEOUT="${2:-}"; shift 2 ;;
+    -p|--prompt) PROMPT="${2:-}"; PROMPT_SET=1; shift 2 ;;
+    -h|--help)
+      sed -n '2,45p' "$0"; exit 0 ;;
+    *) echo "[glm-review] unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+# ---- Prompt resolution: -p and piped stdin are MUTUALLY EXCLUSIVE ----
+# Read stdin whenever it isn't a tty (`< /dev/null` hits EOF immediately, so this
+# does not block). Reading it unconditionally is what lets us DETECT the -p + pipe
+# collision instead of silently dropping the pipe and reviewing the wrong code.
+STDIN_DATA=""
+if [ ! -t 0 ]; then STDIN_DATA="$(cat)"; fi
+
+if [ "$PROMPT_SET" = 1 ] && [ -n "${STDIN_DATA//[$' \t\r\n']/}" ]; then
+  cat >&2 <<'EOM'
+[glm-review] REFUSING: both -p and piped stdin carry content.
+  There is no separate "diff" input channel — stdin IS the prompt, and only when
+  -p is absent. Passing both means one of them is silently ignored, which
+  historically produced confident reviews of the WRONG code.
+  Fix: embed the diff INTO the prompt and pass exactly one of:
+    printf '%s\n\nDIFF:\n%s' "$REVIEW_PROMPT" "$(cat diff.patch)" | glm-review
+    glm-review -p "$REVIEW_PROMPT_INCLUDING_DIFF" < /dev/null
+EOM
+  exit 2
+fi
+
+[ "$PROMPT_SET" = 1 ] || PROMPT="$STDIN_DATA"
+if [ -z "${PROMPT//[$' \t\r\n']/}" ]; then echo "[glm-review] empty prompt" >&2; exit 2; fi
+
+# Resolve the z.ai token WITHOUT ever echoing it.
+ZAI_TOKEN="${ZAI_API_KEY:-${ZAI_AUTH_TOKEN:-}}"
+# Keychain is the default store (2026-07-25). Only consulted when the env vars are
+# empty, so an explicit export still wins. Failure here is non-fatal: the empty-token
+# check below produces the actionable error.
+if [ -z "$ZAI_TOKEN" ] && [ -x /usr/bin/security ] && [ -x /usr/bin/id ]; then
+  ZAI_TOKEN="$(/usr/bin/security find-generic-password \
+                 -a "$(/usr/bin/id -un)" \
+                 -s ai-config.<project>.ZAI_API_KEY \
+                 -w 2>/dev/null || true)"
+fi
+# Defensive sanitize: a valid z.ai key is [A-Za-z0-9._-] only. Strip surrounding
+# whitespace and a single pair of wrapping quotes/angle-brackets — the classic
+# "kept the <placeholder> brackets on paste" error (seen 2026-07-17). Never touches
+# interior chars, so a real key is unaffected.
+ZAI_TOKEN="${ZAI_TOKEN#"${ZAI_TOKEN%%[![:space:]]*}"}"   # ltrim whitespace
+ZAI_TOKEN="${ZAI_TOKEN%"${ZAI_TOKEN##*[![:space:]]}"}"   # rtrim whitespace
+ZAI_TOKEN="${ZAI_TOKEN#[\<\"\']}"                          # strip one leading < " '
+ZAI_TOKEN="${ZAI_TOKEN%[\>\"\']}"                          # strip one trailing > " '
+if [ -z "$ZAI_TOKEN" ]; then
+  echo "[glm-review] z.ai token not found in \$ZAI_API_KEY or the macOS Keychain." >&2
+  echo "             Store it in the Keychain (preferred — encrypted at rest, no plaintext dotfile):" >&2
+  echo "             security add-generic-password -a \"\$(id -un)\" -s ai-config.<project>.ZAI_API_KEY -w -U" >&2
+  echo "             Omit a value after -w so 'security' prompts; that keeps the key out of shell" >&2
+  echo "             history and argv. Never paste the key into chat." >&2
+  exit 4
+fi
+
+[ -x "$CLAUDE_BIN" ] || { echo "[glm-review] claude CLI not found at $CLAUDE_BIN" >&2; exit 127; }
+
+# Bound the run if GNU timeout is available.
+RUNNER=()
+if command -v gtimeout >/dev/null 2>&1; then RUNNER=(gtimeout "$TIMEOUT")
+elif command -v timeout >/dev/null 2>&1; then RUNNER=(timeout "$TIMEOUT")
+fi
+
+# Resolve repo root for grounding (read-only exposure via --add-dir).
+[ -n "$REPO" ] || REPO="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/glm-review.XXXXXX")"
+OUT="$WORK/out"; ERR="$WORK/err"
+# The nested claude writes a session transcript under ~/.claude/projects/ keyed
+# to the (resolved) temp cwd with / and . mapped to '-'. Those transcripts can
+# embed credential-shaped content (audit finding 2026-07-18), so remove them
+# with the workdir. Guarded: only rm when the computed path clearly points at a
+# glm-review transcript dir — a failed realpath must never widen the target.
+WORK_TRANSCRIPTS="$HOME/.claude/projects/$(realpath "$WORK" 2>/dev/null | tr '/.' '--')"
+case "$WORK_TRANSCRIPTS" in
+  "$HOME/.claude/projects/"*glm-review*) : ;;
+  *) WORK_TRANSCRIPTS="" ;;
+esac
+trap 'rm -rf "$WORK" ${WORK_TRANSCRIPTS:+"$WORK_TRANSCRIPTS"}' EXIT
+
+# Read-only tool posture: allow only inspection tools; deny everything that mutates
+# state, runs shell, or reaches the network / spawns subagents.
+ALLOW=(Read Grep Glob)
+DENY=(Edit Write NotebookEdit Bash WebFetch WebSearch Task)
+
+SYS_APPEND="You are a read-only code reviewer. You may ONLY read files with Read/Grep/Glob. You cannot and must not edit anything. The repository under review is at ${REPO:-<none>}."
+
+run_claude() { # runs from the throwaway WORK dir so this repo's project hooks never load
+  local args=(-p "$PROMPT" --model "$MODEL" --output-format text
+             --allowedTools "${ALLOW[@]}" --disallowedTools "${DENY[@]}"
+             --append-system-prompt "$SYS_APPEND")
+  [ -n "$REPO" ] && args+=(--add-dir "$REPO")
+  # z.ai's Anthropic-compatible endpoint authenticates via the Bearer token
+  # (ANTHROPIC_AUTH_TOKEN). We must UNSET ANTHROPIC_API_KEY: if it's set, claude sends
+  # it as x-api-key and it TAKES PRECEDENCE over the Bearer token, which z.ai rejects
+  # (401). Verified 2026-07-17 — setting both caused the auth failure.
+  (
+    cd "$WORK" || exit 1
+    unset ANTHROPIC_API_KEY
+    ANTHROPIC_BASE_URL="$ZAI_BASE_URL" \
+    ANTHROPIC_AUTH_TOKEN="$ZAI_TOKEN" \
+    "${RUNNER[@]}" "$CLAUDE_BIN" "${args[@]}" < /dev/null
+  )
+}
+
+run_claude >"$OUT" 2>"$ERR"; rc=$?
+
+# Fail loudly on auth problems rather than handing the gate a broken/empty review.
+# 2026-07-18: scope this check to STDERR + claude-CLI error shapes ONLY. The old
+# grep also scanned $OUT for bare words like "authentication" — a code review
+# ABOUT auth middleware tripped it, and the EXIT trap then deleted the finished
+# review before it was ever printed. Reviews legitimately discuss auth; only
+# the CLI's own error output signals a real auth failure. On a genuine failure
+# $OUT is empty/tiny anyway, so printing it below is harmless.
+if grep -qiE 'invalid api key|invalid x-api-key|API Error.*(401|403)|authentication[_ ]error|OAuth token has expired' "$ERR" 2>/dev/null; then
+  echo "[glm-review] z.ai authentication failed. Check that ZAI_API_KEY is a valid z.ai key and the endpoint is $ZAI_BASE_URL." >&2
+  cat "$ERR" >&2
+  exit 4
+fi
+
+if [ "${rc:-0}" = "124" ]; then
+  echo "[glm-review] timed out after ${TIMEOUT}s" >&2
+fi
+
+cat "$OUT"
+cat "$ERR" >&2
+exit "$rc"

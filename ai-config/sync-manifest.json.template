@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "global": {
+    "target": "~/.codex/AGENTS.md",
+    "preamble": "~/.claude/ai-config/global-codex-preamble.md",
+    "claude_source": "~/.claude/CLAUDE.md",
+    "rules": [
+      "~/.claude/rules/coding-style.md",
+      "~/.claude/rules/development-workflow.md",
+      "~/.claude/rules/geolocation-standard.md",
+      "~/.claude/rules/git-workflow.md",
+      "~/.claude/rules/multi-ai-harness.md",
+      "~/.claude/rules/opus-fallback-implementation.md",
+      "~/.claude/rules/patterns.md",
+      "~/.claude/rules/security.md",
+      "~/.claude/rules/testing.md"
+    ],
+    "host_only_rules": [
+      "~/.claude/rules/agents.md",
+      "~/.claude/rules/codex-adversarial-review.md",
+      "~/.claude/rules/hooks.md",
+      "~/.claude/rules/performance.md"
+    ],
+    "appendix": "~/.claude/ai-config/global-codex-appendix.md"
+  },
+  "project": {
+    "default_root": "~/src/your-project",
+    "source": "CLAUDE.md",
+    "target": "AGENTS.md",
+    "preamble": "~/.claude/ai-config/project-codex-preamble.md",
+    "excluded_heading": "## Parallel sessions \u2014 Claude never edits canonical",
+    "allowed_top_level_headings": [
+      "## Project: <name>",
+      "## Pre-Commit Testing \u2014 MANDATORY",
+      "## Deployment Workflow \u2014 ALWAYS follow this order",
+      "## Secrets / Security"
+    ],
+    "substitutions": [
+      {
+        "from": "# CLAUDE.md \u2014 Context for Claude across sessions",
+        "to": "# AGENTS.md \u2014 Context for Codex across sessions"
+      }
+    ]
+  }
+}

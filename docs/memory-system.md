@@ -20,7 +20,7 @@ Four pieces that turn the default into a curated knowledge graph:
 
 One fact per file. Each file has frontmatter:
 
-```
+```yaml
 ---
 name: <short title>
 description: <one-line description — used when Claude looks for memories>
@@ -32,16 +32,32 @@ scope: <always-apply | on-demand>      # optional
 Folders correspond to topic areas (`user/`, `feedback/`, `project/`, `infrastructure/`, `frontend/`, `testing/`, `security/`, `reference/`, `completed/`). `meta/` is reserved for the audit hook's reports and session logs.
 
 The four types are intentionally narrow:
+
 - `user`: facts about YOU (preferences, role, expertise)
 - `feedback`: corrections AND validated approaches. Body leads with the rule, then `**Why:**` + `**How to apply:**` lines.
 - `project`: ongoing work, decisions, deadlines. Include absolute dates.
 - `reference`: pointers to external systems (dashboards, channels, tools).
 
-### 2. `MEMORY.md` is an index, not a memory
+### 2. `MEMORY.md` is a router, not a memory
 
-The only file auto-loaded each session. Keep it under 200 lines (the cap). Each entry is one line: `- [Title](path/to/note.md) — one-line hook`. The atomic notes live in subdirs and only get pulled in when relevant.
+The only file auto-loaded each session. The harness loads roughly its first **200 lines / 25KB** — so treat ~14KB as your warning line, not the ceiling.
 
-This keeps token cost flat as the corpus grows — adding 100 new notes doesn't increase what loads on session start, only `MEMORY.md` does.
+This started as a flat index (one line per note) and that stopped scaling around a few hundred notes: the index itself became the thing too big to load. The current shape is **progressive disclosure in three tiers**:
+
+```text
+MEMORY.md                 tier 1 — router: red-flag rules + one link per topic folder
+<topic>/index.md          tier 2 — one link line per note in that folder
+<topic>/<note>.md         tier 3 — the actual atomic fact
+```
+
+`MEMORY.md` carries only two kinds of content:
+
+- **🔴 Red-flag rules** — things that are actively dangerous to get wrong, stated in ≤1 line each, with the *why* living in the linked file. "Never edit canonical", "this recert window is 6 months not 12", "these two flags must only be sent when changed".
+- **Routing lines** — one per topic folder: `- scraping/index.md — scrapers, proxies, schedules`.
+
+Everything else lives one or two hops away and gets pulled in only when the work touches that area. The corpus in the source setup is **763 notes**; the router is a couple of hundred lines. Adding the 764th note doesn't change session-start cost at all.
+
+**The rule that keeps it working: never append detail to `MEMORY.md`.** Write the detail file in its topic folder, add a link line to that folder's `index.md`, and add a tier-1 line *only* if it's a red flag. Every memory system dies the same way — by someone deciding their one fact is important enough for the top-level file.
 
 ### 3. Lifecycle hook (`memory_health_audit.py`)
 
@@ -71,7 +87,7 @@ The snapshots survive the compaction. When you resume work tomorrow, the audit h
 
 ## Comparison to alternatives
 
-vs. **default Claude memory**: same storage mechanism (still `~/.claude/projects/<slug>/memory/`), just structured around an index + atomic notes + lifecycle hook. You can fall back to flat MEMORY.md any time — the audit hook just won't have much to do.
+vs. **default Claude memory**: same storage mechanism (still `~/.claude/projects/<slug>/memory/`), just structured around a router + atomic notes + lifecycle hook. You can fall back to flat MEMORY.md any time — the audit hook just won't have much to do.
 
 vs. **mem-palace-style structured memory**: similar atomic-note idea but file-based, not vector-DB-backed. No semantic search; you rely on Claude reading the index and pulling files by name/path. Tradeoff: no semantic recall, but full transparency, no embedding cost, no extra service to run, and you can grep your memory like any text corpus.
 
@@ -92,7 +108,23 @@ vs. **Anthropic's emerging memory features (2026+)**: those handle session conti
 - Ephemeral task state — use TodoWrite for that
 - Anything in CLAUDE.md (it's already auto-loaded by Claude Code)
 
+## Binding the hooks to your project
+
+All three hooks derive their paths from one environment variable — set it in your shell profile:
+
+```bash
+export AI_MEMORY_PROJECT_ROOT="$HOME/src/your-project"
+```
+
+Claude Code stores per-project state under `~/.claude/projects/<abs-path-with-slashes-as-dashes>/`, so the hooks compute that slug rather than hardcoding it. The capture hooks also no-op for any `cwd` outside the bound project, which is what keeps a session in an unrelated repo from writing into this corpus.
+
 ## Recovery
+
+**Before concluding a memory was never written, grep the quarantine.** This is the single most common false alarm: a note aged out, got quarantined exactly as designed, and now looks deleted.
+
+```bash
+grep -r "<term>" ~/.claude/projects/<slug>/memory-repository/
+```
 
 Quarantined files live in `<project>/memory-repository/<date>/` for 180 days before final deletion. Recover with:
 

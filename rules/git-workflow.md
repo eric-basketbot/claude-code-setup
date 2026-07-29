@@ -9,7 +9,8 @@
 
 Types: feat, fix, refactor, docs, test, chore, perf, ci
 
-Note: Attribution disabled globally via ~/.claude/settings.json.
+Note: Commit and PR attribution are disabled globally through the
+`attribution.commit` and `attribution.pr` settings.
 
 ## Pull Request Workflow
 

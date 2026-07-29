@@ -1,5 +1,6 @@
 {
-  "_comment": "This fragment is merged into ~/.claude/settings.json by install.sh. It only wires the 4 JS + 2 Python hooks that ship in this repo. Plugin-based hooks (hookify, security-guidance, ralph-wiggum, etc.) are NOT included here — install those plugins separately via `/plugin install` or marketplace. The placeholder __HOME__ is expanded by install.sh to your actual $HOME.",
+  "_comment": "Merged into ~/.claude/settings.json by install.sh. Wires ONLY the 4 JS + 2 Python hooks and the statusline that ship in this repo. Plugin-based hooks (hookify, security-guidance, etc.) are NOT here — install those plugins separately. __HOME__ is expanded by install.sh to your actual $HOME. The merge dedupes by command string, so re-running install.sh never doubles a hook.",
+  "_note_statusLine": "install.sh only sets statusLine if you do not already have one — it will not clobber an existing statusline.",
   "hooks": {
     "PreToolUse": [
       {
@@ -56,5 +57,9 @@
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node __HOME__/.claude/hooks/cc-statusline.js"
   }
 }

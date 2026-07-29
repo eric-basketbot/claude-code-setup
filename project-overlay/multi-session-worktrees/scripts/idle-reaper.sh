@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Hourly launchd job. For every /tmp/${PROJECT_SLUG}-auto-* worktree:
+# Hourly launchd job. For every wt-auto-* worktree (both legacy /tmp/wt-auto-*
+# and new ~/.agent-worktrees/wt-auto-*):
 #   - if a live claude PID owns it (per registry) → skip
 #   - if branch tip is unchanged for >= IDLE_HOURS → run cleanup-worktree.sh
 #
 # Catches sessions that crashed without firing SessionEnd. cleanup-worktree.sh
 # preserves WIP via stash/orphan-move so nothing is lost.
+#
+# KNOWN LIMITATION: macOS TCC blocks launchd-spawned bash from reading files
+# under ~/Downloads. If this script lives in the canonical repo there, every
+# hourly fire errors "Operation not permitted" and the safety net silently
+# breaks. See docs/launchd-safety-net-tcc.md for the FDA-grant workaround
+# that lets the launchd path succeed.
 
 set -uo pipefail
 
@@ -24,10 +31,12 @@ THRESHOLD="$((NOW - IDLE_HOURS * 3600))"
 LIVE_PATHS_TMP="$(mktemp -t bb-live.XXXXXX)"
 bb_registry_live_lines | awk -F'|' '{print $2}' > "$LIVE_PATHS_TMP" 2>/dev/null || true
 
-# macOS resolves /tmp → /private/tmp; check both.
-for d in /tmp/${PROJECT_SLUG}-auto-* /private/tmp/${PROJECT_SLUG}-auto-*; do
+# Scan BOTH the new WORKTREE_BASE/wt-auto-* (reboot-survivable) and the
+# legacy /tmp/wt-auto-* paths (macOS resolves /tmp → /private/tmp, so check
+# both /tmp prefixes).
+for d in "${WORKTREE_BASE}"/wt-auto-* /tmp/wt-auto-* /private/tmp/wt-auto-*; do
   [[ -d "$d" ]] || continue
-  # Resolve to canonical /private/tmp form for comparison.
+  # Resolve to physical path for comparison.
   REAL="$(cd "$d" 2>/dev/null && pwd -P)" || continue
   ALIAS="${REAL/#\/private\/tmp/\/tmp}"
 

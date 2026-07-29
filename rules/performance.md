@@ -2,20 +2,24 @@
 
 ## Model Selection Strategy
 
-**Haiku 4.5** (90% of Sonnet capability, 3x cost savings):
+**`haiku` alias** (when available):
 - Lightweight agents with frequent invocation
 - Pair programming and code generation
 - Worker agents in multi-agent systems
 
-**Sonnet 4.6** (Best coding model):
+**`sonnet` alias**:
 - Main development work
 - Orchestrating multi-agent workflows
 - Complex coding tasks
 
-**Opus 4.5** (Deepest reasoning):
+**`opus` alias**:
 - Complex architectural decisions
 - Maximum reasoning requirements
 - Research and analysis tasks
+
+Use aliases rather than hard-coded dated model IDs so Claude Code resolves the
+current supported release. Verify the active model when model choice is
+material; do not preserve capability or cost ratios as permanent facts.
 
 ## Context Window Management
 

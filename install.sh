@@ -3,16 +3,26 @@
 # Idempotent. Re-running is safe. Use --dry-run to preview, --uninstall to reverse.
 #
 # What gets installed (under $HOME/.claude/):
-#   rules/codex-adversarial-review.md        the flagship 3-vendor review gate
+#   rules/multi-ai-harness.md                THE SHARED CONTRACT (both hosts)
+#   rules/codex-adversarial-review.md        the 5-vendor review gate procedure
+#   rules/opus-fallback-implementation.md    implementer ladder on host degradation
 #   rules/{development-workflow,agents,git-workflow,performance,...}.md
-#   agents/codex-reviewer.md                 wraps `codex exec review`
-#   agents/coderabbit-reviewer.md            wraps `coderabbit review --plain`
+#   agents/{codex,coderabbit,kimi,glm}-reviewer.md   the review panel
+#   agents/chatgpt-planner.md                business/strategy planning voice
+#   skills/ai-config-audit/                  22-check config audit
+#   ai-config/*.template                     sync manifest + topology templates
+#   scripts/codex-implementation-fallback.sh the ONLY workspace-write dispatch
+#   scripts/keychain-exec.sh                 Keychain -> env broker for MCP
+#   scripts/sync-ai-config.py                generate Codex AGENTS.md
 #   hooks/memory_health_audit.py             memory lifecycle (launchd-driven)
 #   hooks/session_snapshot.py                15-min rolling session snapshots
 #   hooks/precompact_session_log.py          one-line breadcrumb on every compact
 #   hooks/cc-{write-injection-guard,context-monitor,read-injection-scanner,statusline}.js
-#   scripts/cross-ai-review.sh               manual 3-vendor review aggregator
+#   scripts/cross-ai-review.sh               manual multi-vendor review aggregator
 #   settings.json fragment merged into ~/.claude/settings.json
+#
+# Also installed OUTSIDE ~/.claude/:
+#   wrappers/{kimi-review,glm-review,chatgpt-plan} -> ~/.local/bin/ (chmod +x)
 #   ~/.claude/projects/<slug>/memory/ skeleton (for whichever project you point us at)
 #
 # Does NOT install:
@@ -82,10 +92,20 @@ command -v python3 >/dev/null 2>&1 || have_python3=0
 (( have_jq      )) || say "WARN: jq not found — settings.json merge will fall back to print-fragment-for-manual-merge."
 (( have_python3 )) || say "WARN: python3 not found — Python hooks will fail at runtime."
 
+# The config audit parses TOML. tomllib is stdlib on 3.11+; older interpreters
+# (macOS ships 3.9) need the tomli backport.
+if (( have_python3 )); then
+  if ! python3 -c 'import tomllib' >/dev/null 2>&1 && ! python3 -c 'import tomli' >/dev/null 2>&1; then
+    pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '?')"
+    say "WARN: python3 is $pyver and has no TOML parser — ai-config-audit will not run."
+    say "      Fix with:  python3 -m pip install tomli    (or use Python 3.11+)"
+  fi
+fi
+
 # ---- uninstall (reverse the install) -------------------------------------
 if (( UNINSTALL )); then
   banner "Uninstall"
-  for d in rules agents hooks scripts; do
+  for d in rules agents hooks scripts ai-config; do
     if [[ -d "$SELF_DIR/$d" ]]; then
       for f in "$SELF_DIR/$d"/*; do
         [[ -e "$f" ]] || continue
@@ -143,15 +163,54 @@ copy_dir() {
   say "$src_subdir -> $dst (skipped=$skipped)"
 }
 
-copy_dir "rules"   "rules"
-copy_dir "agents"  "agents"
-copy_dir "hooks"   "hooks"
-copy_dir "scripts" "scripts"
+copy_dir "rules"     "rules"
+copy_dir "agents"    "agents"
+copy_dir "hooks"     "hooks"
+copy_dir "scripts"   "scripts"
+copy_dir "ai-config" "ai-config"
+
+# skills/ is nested (skills/<name>/SKILL.md + scripts/), so copy the tree wholesale
+if [[ -d "$SELF_DIR/skills" ]]; then
+  run "mkdir -p '$CLAUDE_DIR/skills'"
+  for skill_dir in "$SELF_DIR"/skills/*/; do
+    [[ -d "$skill_dir" ]] || continue
+    skill_name="$(basename "$skill_dir")"
+    if [[ -e "$CLAUDE_DIR/skills/$skill_name" ]] && (( ! FORCE )); then
+      say "SKIP $CLAUDE_DIR/skills/$skill_name (exists; pass --force to overwrite)"
+      continue
+    fi
+    run "rm -rf '$CLAUDE_DIR/skills/$skill_name'"
+    run "cp -R '$skill_dir' '$CLAUDE_DIR/skills/$skill_name'"
+    say "skills/$skill_name -> $CLAUDE_DIR/skills/$skill_name"
+  done
+fi
+
+# wrappers go on PATH, not under ~/.claude/
+banner "Install wrappers to ~/.local/bin"
+if [[ -d "$SELF_DIR/wrappers" ]]; then
+  run "mkdir -p '$HOME/.local/bin'"
+  for w in "$SELF_DIR"/wrappers/*; do
+    [[ -f "$w" ]] || continue
+    wb="$(basename "$w")"
+    [[ "$wb" == "README.md" ]] && continue
+    if [[ -e "$HOME/.local/bin/$wb" ]] && (( ! FORCE )); then
+      say "SKIP ~/.local/bin/$wb (exists; pass --force to overwrite)"
+      continue
+    fi
+    run "cp '$w' '$HOME/.local/bin/$wb'"
+    run "chmod +x '$HOME/.local/bin/$wb'"
+  done
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) : ;;
+    *) say "WARN: ~/.local/bin is not on your PATH — the reviewer agents will not find the wrappers." ;;
+  esac
+fi
 
 # chmod +x all hooks and scripts
 if (( ! DRY_RUN )); then
   find "$CLAUDE_DIR/hooks"   -maxdepth 1 -type f \( -name '*.sh' -o -name '*.py' -o -name '*.js' \) -exec chmod +x {} \; 2>/dev/null || true
-  find "$CLAUDE_DIR/scripts" -maxdepth 1 -type f -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
+  find "$CLAUDE_DIR/scripts" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.py' \) -exec chmod +x {} \; 2>/dev/null || true
+  find "$CLAUDE_DIR/skills"  -type f -name '*.py' -path '*/scripts/*' -exec chmod +x {} \; 2>/dev/null || true
 fi
 
 # ---- merge settings.json --------------------------------------------------
@@ -190,7 +249,10 @@ else
             | unique_by(.hooks | map(.command) | tostring)
           )
         }) | add) as $merged |
-        $cur + { hooks: $merged }
+        $cur
+        + { hooks: $merged }
+        + (if ($cur.statusLine // null) == null and ($frag.statusLine // null) != null
+           then { statusLine: $frag.statusLine } else {} end)
       ' "$CLAUDE_DIR/settings.json" "$FRAGMENT_RENDERED" > "$tmp" && mv "$tmp" "$CLAUDE_DIR/settings.json"
       say "merged hooks into $CLAUDE_DIR/settings.json (deduped by command)"
     fi
@@ -220,28 +282,52 @@ fi
 banner "Next steps"
 cat <<'EOF'
 
-The user-level pieces are installed. A few external setup tasks remain:
+The user-level pieces are installed. External setup remains — the pack degrades
+gracefully, so wire up only the vendors you actually want on the panel.
 
-  1. Codex auth (for the codex-reviewer agent):
-       codex login                # or export OPENAI_API_KEY=...
+  1. OpenAI / Codex (reviewer + technical planner):
+       brew install codex && codex login
 
-  2. CodeRabbit auth (for the coderabbit-reviewer agent):
+  2. CodeRabbit (pre-commit reviewer):
        coderabbit auth login
-     AND install the CodeRabbit GitHub App on your repo's org/account:
+     AND install the GitHub App on your repo's org — CLI auth alone is NOT enough:
        https://github.com/apps/coderabbitai
 
-  3. (Optional) Multi-session worktree harness — installs into ONE project:
-       ./project-overlay/multi-session-worktrees/install-in-project.sh /path/to/your/repo
-     Add --launchd at the end for hourly idle-reaper + daily janitor (macOS).
+  3. Kimi / Moonshot (reviewer + planner):
+       curl -LsSf https://code.kimi.com/install.sh | bash
+       kimi login
+     GOTCHA: unauthenticated `kimi` exits 0. Trust `kimi-review`'s exit 4.
 
-  4. Browse rules/ — most ship as-is, but coding-style.md / security.md /
-     testing.md / patterns.md / hooks.md are TypeScript/JS opinionated starter
-     templates. Edit or remove the ones that don't match your stack.
+  4. GLM / Zhipu (reviewer + planner) — key goes in the macOS Keychain:
+       security add-generic-password -U -a "$(id -un)" \
+         -s ai-config.myproject.ZAI_API_KEY -w
+     WARNING: -w MUST be the final argument with nothing after it, so `security`
+     prompts you. A flag placed after -w is silently stored AS the password.
 
-  5. Restart any active Claude Code sessions to pick up the new hooks/rules.
+  5. Bind the memory hooks to your repo (add to your shell profile):
+       export AI_MEMORY_PROJECT_ROOT="/path/to/your/repo"
+
+  6. (Optional) Multi-session worktree harness, per project:
+       ./project-overlay/multi-session-worktrees/install-in-project.sh /path/to/repo
+     Add --launchd for the hourly idle-reaper + daily janitor (macOS).
+     NOTE: if your repo is under ~/Downloads or ~/Documents, macOS TCC blocks the
+     launchd jobs silently. Grant /bin/bash Full Disk Access, or move the repo.
+
+  7. (Optional, two-assistant setups only) Config audit + Codex sync:
+       cp ai-config/sync-manifest.json.template ~/.claude/ai-config/sync-manifest.json
+       cp ai-config/topology.json.template      ~/.claude/ai-config/topology.json
+       # edit both — point default_root at your repo, prune roles you don't have
+
+  8. Review rules/ — coding-style.md, security.md, testing.md, patterns.md and
+     hooks.md are opinionated TypeScript/JS starter templates. Edit or delete the
+     ones that don't match your stack; they load every single session.
+
+  9. Restart any active Claude Code sessions.
 
 To verify:
-  - Open a fresh Claude session and ask "what rules are active?"
-  - Trigger a non-trivial change and watch for the 3-vendor planning gate to fire.
+  python3 ~/.claude/skills/ai-config-audit/scripts/audit.py     # 0 = clean
+  # then in a fresh session: make a non-trivial change and watch the gate fire.
+
+Read docs/quickstart.md for the staged adoption path.
 
 EOF

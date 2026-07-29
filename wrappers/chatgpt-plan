@@ -1,0 +1,125 @@
+#!/opt/homebrew/bin/bash
+# chatgpt-plan — a BUSINESS/STRATEGY planning voice powered by the ChatGPT
+# subscription (the same OAuth login Codex uses), NOT the metered OpenAI platform
+# API. This is the OpenAI *general* leg of the planning panel (see
+# ~/.claude/rules/codex-adversarial-review.md, Trigger 1). Added 2026-07-18.
+#
+# ROLE (enforced by the system instructions below): business, product, marketing,
+# operations, strategy, and writing plans ONLY. It is NOT a coding assistant —
+# Codex is the coding voice. Keep the split clean.
+#
+# WHY THIS PATH (not api.openai.com)
+#   The user authenticates Codex + ChatGPT with the same ChatGPT login
+#   (auth_mode: chatgpt in ~/.codex/auth.json). The metered platform API
+#   (api.openai.com/v1) is billed SEPARATELY and returns insufficient_quota for a
+#   ChatGPT-subscription account. The ChatGPT *backend* that Codex talks to
+#   (chatgpt.com/backend-api/codex/responses) IS covered by the subscription, so we
+#   ride that. Verified 2026-07-18: it streams fine with the codex OAuth token.
+#   Caveat: a ChatGPT account may only use the Codex-backend model(s) (default
+#   gpt-5.6-sol) — the same model Codex uses. This voice is therefore differentiated
+#   from Codex by ROLE + prompt, not by model.
+#
+# AUTH / KEY (never logged)
+#   Reads the OAuth access_token + account_id fresh from ~/.codex/auth.json on every
+#   call, so Codex's own token refresh keeps us current. Never printed. If the token
+#   is missing/expired, exit 4 and tell the user to refresh it (run `codex` once or
+#   open the ChatGPT app). NO fallback to the metered API (would bill / would 402).
+#
+# FRAGILITY (documented on purpose)
+#   chatgpt.com/backend-api is a private, undocumented endpoint. It can change shape.
+#   If OpenAI changes it, fall back to invoking `codex exec --sandbox read-only` with
+#   a business-planning prompt (same subscription, maintained CLI) until this is fixed.
+#
+# USAGE
+#   chatgpt-plan [--model <name>] [--timeout <secs>] -p "<request>"
+#   printf '%s' "<request>" | chatgpt-plan
+#
+# EXIT CODES
+#   0 success (plan on stdout)   2 usage error   3 empty/parse failure
+#   4 not authenticated / token expired   124 timeout   127 missing dep
+set -uo pipefail
+
+AUTH="${CODEX_AUTH_JSON:-$HOME/.codex/auth.json}"
+ENDPOINT="${CHATGPT_PLAN_ENDPOINT:-https://chatgpt.com/backend-api/codex/responses}"
+MODEL="${CHATGPT_PLAN_MODEL:-gpt-5.6-sol}"
+TIMEOUT="${CHATGPT_PLAN_TIMEOUT:-300}"
+PROMPT=""
+
+INSTRUCTIONS="You are a senior business and strategy planner. Produce clear, well-structured plans for business, product, marketing, operations, strategy, and writing tasks: state assumptions, priorities, risks, milestones, and concrete next steps. You are NOT a coding assistant and must not write code or do software-engineering work — Codex is the coding voice. If asked to plan software, give only the business/product framing (goals, users, scope, risks, sequencing) and explicitly defer implementation detail to the engineering voices. Be specific and decision-oriented; avoid filler."
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model)   MODEL="${2:-}"; shift 2 ;;
+    --timeout) TIMEOUT="${2:-}"; shift 2 ;;
+    -p|--prompt) PROMPT="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    *) echo "[chatgpt-plan] unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+if [ -z "$PROMPT" ] && [ ! -t 0 ]; then PROMPT="$(cat)"; fi
+if [ -z "${PROMPT// /}" ]; then echo "[chatgpt-plan] empty prompt" >&2; exit 2; fi
+
+command -v jq >/dev/null 2>&1 || { echo "[chatgpt-plan] jq required" >&2; exit 127; }
+command -v python3 >/dev/null 2>&1 || { echo "[chatgpt-plan] python3 required" >&2; exit 127; }
+[ -f "$AUTH" ] || { echo "[chatgpt-plan] ChatGPT/Codex auth not found at $AUTH — run 'codex login' or open the ChatGPT app." >&2; exit 4; }
+
+AT="$(jq -r '.tokens.access_token // empty' "$AUTH" 2>/dev/null)"
+ACC="$(jq -r '.tokens.account_id // empty' "$AUTH" 2>/dev/null)"
+if [ -z "$AT" ] || [ -z "$ACC" ]; then
+  echo "[chatgpt-plan] no ChatGPT access token/account in $AUTH — run 'codex login' or open the ChatGPT app to refresh." >&2
+  exit 4
+fi
+
+# Build the request body with jq so the prompt is safely JSON-encoded.
+REQ="$(jq -n --arg m "$MODEL" --arg ins "$INSTRUCTIONS" --arg p "$PROMPT" \
+  '{model:$m, instructions:$ins, input:[{type:"message", role:"user", content:[{type:"input_text", text:$p}]}], store:false, stream:true}')"
+
+RUNNER=()
+if command -v gtimeout >/dev/null 2>&1; then RUNNER=(gtimeout "$TIMEOUT")
+elif command -v timeout >/dev/null 2>&1; then RUNNER=(timeout "$TIMEOUT")
+fi
+
+ERRF="$(mktemp)"; trap 'rm -f "$ERRF"' EXIT
+
+# Stream the Responses API SSE and concatenate response.output_text.delta chunks.
+OUT="$(
+  "${RUNNER[@]}" curl -sS -N "$ENDPOINT" \
+    -H "Authorization: Bearer $AT" \
+    -H "content-type: application/json" \
+    -H "chatgpt-account-id: $ACC" \
+    -H "OpenAI-Beta: responses=experimental" \
+    --data-binary "$REQ" 2>>"$ERRF" \
+  | python3 -c '
+import sys, json
+parts=[]; raw=[]
+for line in sys.stdin:
+    raw.append(line)
+    s=line.strip()
+    if not s.startswith("data:"): continue
+    p=s[5:].strip()
+    if not p or p=="[DONE]": continue
+    try: o=json.loads(p)
+    except Exception: continue
+    if o.get("type")=="response.output_text.delta":
+        parts.append(o.get("delta",""))
+text="".join(parts)
+if text:
+    sys.stdout.write(text); sys.exit(0)
+sys.stderr.write("".join(raw)[:2000]); sys.exit(3)
+' 2>>"$ERRF"
+)"
+rc=$?
+
+if [ "$rc" = "124" ]; then echo "[chatgpt-plan] timed out after ${TIMEOUT}s" >&2; exit 124; fi
+
+if [ -z "$OUT" ] || [ "$rc" -ne 0 ]; then
+  if grep -qiE 'invalid.*token|token.*expired|expired|401|unauthorized|unauthenticated|invalid_grant' "$ERRF" 2>/dev/null; then
+    echo "[chatgpt-plan] ChatGPT token invalid or expired — run 'codex login' or open the ChatGPT app to refresh, then retry." >&2
+  else
+    echo "[chatgpt-plan] request failed (see below):" >&2
+    head -c 1500 "$ERRF" >&2; echo >&2
+  fi
+  exit 4
+fi
+
+printf '%s\n' "$OUT"

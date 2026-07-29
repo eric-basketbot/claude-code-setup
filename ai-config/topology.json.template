@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "roles": [
+    "architect",
+    "build-error-resolver",
+    "chatgpt-planner",
+    "chief-of-staff",
+    "code-reviewer",
+    "codex-reviewer",
+    "database-reviewer",
+    "doc-updater",
+    "e2e-runner",
+    "gemini-reviewer",
+    "glm-reviewer",
+    "go-build-resolver",
+    "go-reviewer",
+    "harness-optimizer",
+    "kimi-reviewer",
+    "loop-operator",
+    "planner",
+    "python-reviewer",
+    "refactor-cleaner",
+    "security-reviewer"
+  ],
+  "claude_host_only_agents": [
+    "coderabbit-reviewer"
+  ],
+  "claude_host_hook_dependencies": [
+    "~/.claude/plugins/hookify/hooks/stop.py",
+    "~/.claude/plugins/hookify/hooks/pretooluse.py",
+    "~/.claude/plugins/security-guidance/hooks/security_reminder_hook.py",
+    "~/.claude/plugins/hookify/hooks/posttooluse.py",
+    "~/.claude/plugins/hookify/hooks/userpromptsubmit.py",
+    "~/.claude/hooks/cc-write-injection-guard.js",
+    "~/.claude/hooks/cc-context-monitor.js",
+    "~/.claude/hooks/cc-read-injection-scanner.js",
+    "~/.claude/hooks/ai_session_snapshot.py",
+    "~/.claude/hooks/ai_precompact_session_log.py",
+    "~/.claude/hooks/cc-statusline.js"
+  ],
+  "codex_native_skills": [
+    "adversarial-review",
+    "chronicle"
+  ],
+  "shared_contracts": {
+    "multi_ai_harness": {
+      "contract_id": "multi-ai-harness-v2",
+      "source": "~/.claude/rules/multi-ai-harness.md",
+      "consumers": [
+        "~/.claude/rules/codex-adversarial-review.md",
+        "~/.claude/rules/opus-fallback-implementation.md",
+        "~/.codex/skills/adversarial-review/SKILL.md",
+        "~/.claude/skills/codex-reviewer/SKILL.md",
+        "~/.claude/skills/kimi-reviewer/SKILL.md",
+        "~/.claude/skills/glm-reviewer/SKILL.md",
+        "~/.claude/skills/chatgpt-planner/SKILL.md",
+        "~/.claude/agents/coderabbit-reviewer.md"
+      ],
+      "wrappers": [
+        "~/.npm-global/bin/codex",
+        "~/.local/bin/kimi-review",
+        "~/.local/bin/glm-review",
+        "~/.local/bin/chatgpt-plan",
+        "/opt/homebrew/bin/coderabbit",
+        "~/.claude/scripts/codex-implementation-fallback.sh"
+      ]
+    }
+  },
+  "codex_optional_host_managed_skill_roots": [
+    ".system"
+  ],
+  "claude_host_only_skills": [],
+  "required_shared_skills": [
+    "ai-config-audit",
+    "karpathy-guidelines",
+    "skill-stocktake"
+  ],
+  "generated_skill_packs": {
+    "gstack": {
+      "claude_source": "~/.claude/skills/gstack",
+      "codex_runtime": "~/.codex/skills/gstack",
+      "codex_prefix": "gstack-",
+      "generated_codex": "~/.claude/skills/gstack/.agents/skills",
+      "claude_to_codex_overrides": {
+        "_gstack-command": null,
+        "codex": "gstack-claude",
+        "connect-chrome": null,
+        "gstack-upgrade": "gstack-upgrade"
+      }
+    }
+  },
+  "project_local_skills": [],
+  "required_plugins": {
+    "claude": [
+      "expo",
+      "superpowers"
+    ],
+    "codex": [
+      "expo",
+      "superpowers"
+    ]
+  }
+}

@@ -1,218 +1,190 @@
-# Upstream skills (referenced, not redistributed)
+# Skills, plugins, and agents — the full installed inventory
 
-This setup doesn't bundle anyone else's skills — but the author's actual `~/.claude/skills/` directory has 85 skills installed from various marketplaces. The list below is **exactly what's installed in the author's working setup**, grouped by source, with copy-paste install commands.
+*Snapshot: 2026-07-28. Verified against the actual install, not from memory.*
 
-Don't blindly install everything. Pick the skills that match your stack and workflow. The rules + hooks in **this** repo work without any of them.
+This repo ships **rules, hooks, agents, wrappers, and scripts**. It does **not** redistribute anyone else's skills. This file is the honest inventory of what's installed alongside it, grouped by source, with real install commands.
 
-> All install commands assume Claude Code is installed (`claude` on your PATH) and you're inside any project directory. The `/plugin` and `/plugin marketplace` commands run inside a Claude session.
+**Don't install all of it.** The working set is ~150 skills accumulated over months; most are stack-specific and irrelevant to you. The rules and hooks in this repo work with zero of them. Add skills when you hit friction the rules don't address — that's the only signal worth acting on.
 
----
-
-## 1. Everything Claude Code (ECC) — 57 skills
-
-**Source**: <https://github.com/affaan-m/everything-claude-code> — agent harness performance optimization system. Anthropic Hackathon winner. 47 agents + 181 skills.
-
-**Install the whole marketplace**:
-
-```
-# Inside a Claude session:
-/plugin marketplace add affaan-m/everything-claude-code
-/plugin install everything-claude-code@affaan-m-everything-claude-code
-```
-
-Or use ECC's `configure-ecc` skill (which the install above ships) to pick individual skills.
-
-**Skills from ECC installed in the author's setup**:
-
-Agentic / orchestration / loops:
-- `agent-harness-construction`, `agentic-engineering`, `ai-first-engineering`, `autonomous-loops`, `continuous-agent-loop`, `continuous-learning-v2`, `cost-aware-llm-pipeline`, `enterprise-agent-ops`, `eval-harness`, `iterative-retrieval`, `nanoclaw-repl`, `ralphinho-rfc-pipeline`, `strategic-compact`, `configure-ecc`
-
-Backend / database / infrastructure:
-- `api-design`, `backend-patterns`, `clickhouse-io`, `database-migrations`, `deployment-patterns`, `docker-patterns`, `postgres-patterns`
-
-Code review / quality:
-- `coding-standards`, `security-review`, `security-scan`, `verification-loop`, `skill-stocktake`
-
-Frontend / UI (ECC's):
-- `frontend-patterns`, `frontend-slides`
-
-Stack-specific (install only what matches yours):
-- Python: `python-patterns`, `python-testing`, `django-patterns`, `django-tdd`, `django-security`, `django-verification`
-- Go: `golang-patterns`, `golang-testing`
-- C++: `cpp-coding-standards`, `cpp-testing`
-- Java/Spring: `java-coding-standards`, `jpa-patterns`, `springboot-patterns`, `springboot-tdd`, `springboot-security`, `springboot-verification`
-- E2E: `e2e-testing` (Playwright)
-
-Content / writing / research:
-- `article-writing`, `content-engine`, `content-hash-cache-pattern`, `investor-materials`, `investor-outreach`, `market-research`, `nutrient-document-processing`, `project-guidelines-example`, `regex-vs-llm-structured-text`, `search-first`
+> One caution before bulk-installing: every enabled skill's *description* is loaded into context so the model can decide whether to invoke it. A hundred irrelevant skills is a permanent context tax and a permanent source of wrong-skill invocations. See [Turning skills off](#turning-skills-off) — in the source setup, **63 of the installed skills are explicitly disabled**.
 
 ---
 
-## 2. obra/superpowers — 14 skills
+## 1. Plugins (the modern install path)
 
-**Source**: <https://github.com/obra/superpowers> — Jesse Vincent's agentic skills framework. The most-starred Claude Code plugin (90K+ stars).
+Plugins are the cleanest mechanism — versioned, updatable, and they bring their own hooks and commands.
 
-**Install**:
-
+```text
+superpowers@claude-plugins-official   v6.2.0
+expo@claude-plugins-official          v1.8.6
+arcads@arcads                         v1.0.4
 ```
-# Inside a Claude session:
-/plugin marketplace add obra/superpowers
-/plugin install superpowers@obra-superpowers
-```
-
-**Skills from superpowers installed in the author's setup**:
-
-- `using-superpowers` — establishes how to find and use skills (required by other obra skills)
-- `brainstorming` — explore intent before any creative work
-- `writing-plans` / `executing-plans` — plan/execute split
-- `subagent-driven-development` — execute plans via subagents in the current session
-- `dispatching-parallel-agents` — when to fan out 2+ independent tasks in parallel
-- `finishing-a-development-branch` — decide how to integrate completed work
-- `requesting-code-review` / `receiving-code-review` — code review etiquette on both sides
-- `test-driven-development` — write the test first, watch it fail, write minimal code
-- `systematic-debugging` — four-phase debugging; no fix without root cause
-- `verification-before-completion` — evidence before claiming work is done
-- `writing-skills` — TDD applied to skill authoring
-- `using-git-worktrees` — feature work isolation via worktrees
-
----
-
-## 3. Vercel-Labs agent-skills — 2 skills
-
-**Source**: <https://github.com/vercel-labs/agent-skills> — Vercel's official collection. Open standard, works in Claude Code, Codex CLI, Gemini CLI, Cursor, Copilot CLI.
-
-**Install individual skills**:
 
 ```bash
-# From any shell (not inside Claude):
-npx skills add https://github.com/vercel-labs/agent-skills --skill web-design-guidelines
-npx skills add https://github.com/vercel-labs/agent-skills --skill composition-patterns
+# inside a Claude session
+/plugin install superpowers@claude-plugins-official
+/plugin install expo@claude-plugins-official
+
+/plugin marketplace add arcads-ai/skills
+/plugin install arcads@arcads
 ```
 
-- `web-design-guidelines` — Review UI code against 100+ accessibility / performance / UX rules
-- `composition-patterns` (upstream name: `vercel-composition-patterns`) — React composition patterns that scale (compound components, render props, context)
+### superpowers — the one to install first
+
+Jesse Vincent's agentic framework, now distributed through Anthropic's official marketplace. It used to be installed from `obra/superpowers` directly — **if you have the old install, migrate**; the official one is the maintained path.
+
+Its value is *process* skills that fire before implementation skills: `brainstorming` (explore intent before creative work), `writing-plans` / `executing-plans`, `test-driven-development`, `systematic-debugging` (no fix without a root cause), `verification-before-completion` (evidence before claiming done), `requesting-code-review` / `receiving-code-review`, `subagent-driven-development`, `dispatching-parallel-agents`, `using-git-worktrees`, `writing-skills`, `finishing-a-development-branch`.
+
+`using-superpowers` is the entry point and is required by the others.
+
+### expo — only if you ship React Native
+
+EAS builds, hosting, updates, workflows, routing, native UI, upgrades. Skip entirely if you're not doing mobile.
+
+### arcads — ad creative generation
+
+Niche. Only relevant if you produce video/static ad creative.
+
+⚠️ Both `expo` and `arcads` expose MCP servers needing interactive OAuth. They can't be authorized from a headless or cron session — do it in an interactive session via `/mcp`.
 
 ---
 
-## 4. Anthropic-official — 1 skill
+## 2. gstack — 55 skills from one repo
 
-**Source**: <https://github.com/anthropics/claude-code/tree/main/plugins/frontend-design> (auto-available in the `claude-plugins-official` marketplace).
-
-**Install**:
-
-```
-# Inside a Claude session:
-/plugin install frontend-design@claude-plugins-official
-```
-
-- `frontend-design` — Create production-grade frontend interfaces that avoid generic AI aesthetics
-
----
-
-## 5. gstack (Garry Tan) — 1 skill
-
-**Source**: <https://github.com/garrytan/gstack> — turns Claude Code into a virtual engineering team (CEO, Designer, Eng Manager, Release Manager, QA Lead, Security Officer). Requires Bun v1.0+ and Node.js.
-
-**Install**:
+Garry Tan's "virtual engineering team" — the largest single source here. A git clone rather than a marketplace, and it self-updates.
 
 ```bash
 git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
 ```
 
-- `gstack` — Fast headless-browser QA + 23 opinionated workflow slash commands (/qa, /qa-only, /browse, /review, /ship, etc.). Maintains a persistent headless Chromium daemon across tool calls.
+Installed version: **1.60.1.0**. Requires Bun v1.0+ and Node.
+
+| Group | Skills |
+|---|---|
+| **QA / browser** | `qa`, `qa-only`, `browse`, `connect-chrome`, `open-gstack-browser`, `setup-browser-cookies`, `scrape`, `canary`, `benchmark`, `benchmark-models` |
+| **Review roles** | `review`, `plan-ceo-review`, `plan-eng-review`, `plan-design-review`, `plan-devex-review`, `design-review`, `devex-review`, `cso`, `office-hours`, `retro`, `autoplan`, `plan-tune` |
+| **Ship / deploy** | `ship`, `land-and-deploy`, `setup-deploy`, `health`, `investigate` |
+| **Design** | `design-shotgun`, `design-consultation`, `design-html`, `diagram`, `landing-report` |
+| **Safety** | `careful`, `guard`, `freeze`, `unfreeze` |
+| **Docs** | `document-generate`, `document-release`, `make-pdf`, `spec` |
+| **iOS** | `ios-qa`, `ios-fix`, `ios-clean`, `ios-sync`, `ios-design-review` |
+| **Context / misc** | `context-save`, `context-restore`, `learn`, `pair-agent`, `skillify`, `setup-gbrain`, `sync-gbrain`, `gstack-upgrade`, `codex` |
+
+The QA browser daemon — a persistent headless Chromium held across tool calls — is the standout, genuinely faster than spinning up Playwright per check.
+
+The review roles overlap conceptually with this repo's review panel but are **not** a substitute: gstack's roles are *one model wearing different hats*. That's useful perspective diversity; it is not vendor diversity, and it can't catch what a model shares with itself. Use both.
 
 ---
 
-## 6. plankton (alexfazio) — 1 skill
-
-**Source**: <https://github.com/alexfazio/plankton> — write-time code quality enforcement. Every file edit triggers Rust-based linters + dedicated Claude subprocesses to fix violations.
-
-**Install**:
+## 3. Everything Claude Code (ECC) — 37 skills
 
 ```bash
-git clone https://github.com/alexfazio/plankton.git ~/.claude/skills/plankton-code-quality
+# inside a Claude session
+/plugin marketplace add affaan-m/everything-claude-code
+/plugin install everything-claude-code@affaan-m-everything-claude-code
 ```
 
-(Check the upstream README for the latest install command — may have moved to a marketplace.)
+Identifiable by `origin: ECC` in their frontmatter. Installed here:
 
-- `plankton-code-quality` — Auto-format + lint + Claude-powered fixes on every Write/Edit, via hooks
+- **Agentic / orchestration**: `agent-harness-construction`, `agentic-engineering`, `ai-first-engineering`, `continuous-agent-loop`, `continuous-learning-v2`, `cost-aware-llm-pipeline`, `enterprise-agent-ops`, `eval-harness`, `iterative-retrieval`, `strategic-compact`
+- **Backend / infra**: `api-design`, `backend-patterns`, `database-migrations`, `deployment-patterns`, `docker-patterns`, `postgres-patterns`
+- **Quality**: `coding-standards`, `security-scan`, `skill-stocktake`, `e2e-testing`
+- **Stack-specific**: `python-patterns`, `python-testing`, `golang-patterns`, `golang-testing`, `swift-actor-persistence`, `swift-protocol-di-testing`
+- **Frontend**: `frontend-patterns`, `frontend-slides`
+- **Content / research**: `article-writing`, `content-engine`, `content-hash-cache-pattern`, `investor-materials`, `investor-outreach`, `market-research`, `nutrient-document-processing`, `regex-vs-llm-structured-text`, `search-first`
+
+`search-first` is worth adopting even if you take nothing else: research existing libraries and prior art *before* writing custom code.
 
 ---
 
-## 7. bencium-marketplace — 1 skill
+## 4. Marketing / growth suite — 12 skills
 
-**Source**: <https://github.com/bencium/bencium-marketplace> — 13 design / architecture / productivity skills. Each UX skill ships with 28KB+ of reference material (accessibility, responsive, motion, design systems).
+`ab-testing`, `ad-creative`, `ads`, `ai-seo`, `churn-prevention`, `cro`, `launch`, `pricing`, `product-marketing`, `programmatic-seo`, `seo-audit`, `makeugc-ads`
 
-**Install one or all**:
+Start with `product-marketing` — it writes `.agents/product-marketing.md`, which every other skill in the group reads for product, audience, and positioning context. Without it you re-explain your product on every task.
+
+---
+
+## 5. Design / Stitch — 6 skills
+
+`code-to-design`, `extract-design-md`, `generate-design`, `react-components`, `react-native`, `upload-to-stitch`
+
+Google Stitch round-trip: extract a design system from existing frontend code, generate screens, convert back to React or React Native components. Needs a Stitch API key — store it in the Keychain and broker it (see [`docs/secrets.md`](docs/secrets.md)).
+
+---
+
+## 6. Vercel Labs — 2 skills
 
 ```bash
-# List all skills available:
-npx skills add bencium/bencium-marketplace --list
-
-# Install the one the author uses:
-npx skills add bencium/bencium-marketplace -g --skill bencium-controlled-ux-designer
+npx skills add https://github.com/vercel-labs/agent-skills --skill web-design-guidelines
+npx skills add https://github.com/vercel-labs/agent-skills --skill composition-patterns
 ```
 
-- `bencium-controlled-ux-designer` — UX guidance prioritizing consistency, control, and adherence to standards (vs. its sibling `bencium-innovative-ux-designer`, which is the bold/experimental variant)
+`web-design-guidelines` reviews UI code against 100+ accessibility/performance/UX rules. `composition-patterns` covers React composition that scales (compound components, render props, context).
 
 ---
 
-## 8. Sentry — 1 skill
+## 7. Other third-party
 
-**Source**: Sentry's official skill (requires `sentry` CLI binary). Check <https://sentry.io> for the current install URL.
-
-- `sentry-cli` — Guide for using Sentry CLI: issues, events, projects, API calls, auth
+| Skill | Source | Notes |
+|---|---|---|
+| `react-native-best-practices` | Software Mansion | New Architecture, Reanimated, Gesture Handler. Deep and current. |
+| `react-native-skills` | community | General RN performance |
+| `ui-ux-pro-max` | `nextlevelbuilder/ui-ux-pro-max-skill` | 67 styles, 161 palettes, 57 font pairings |
+| `plankton-code-quality` | `alexfazio/plankton` | Write-time lint + auto-fix via hooks |
+| `sentry-cli` | Sentry | Issues, events, projects via CLI |
+| `tailwind-v4-shadcn` | community | Tailwind v4 + shadcn |
+| `fixing-accessibility`, `fixing-motion-performance` | community | Targeted audit-and-fix |
+| `karpathy-guidelines` | community | |
+| `liquid-glass-design`, `swiftui-patterns`, `swift-concurrency-6-2`, `foundation-models-on-device` | community Apple set | iOS 26 era |
 
 ---
 
-## 9. ui-ux-pro-max (nextlevelbuilder) — 1 skill
+## 8. Author-original — what this repo actually ships
 
-**Source**: <https://github.com/nextlevelbuilder/ui-ux-pro-max-skill> — design intelligence with 67 styles / 161 palettes / 57 font pairings / 99 UX guidelines / 25 chart types / 16 stacks.
+These are in this repo. Everything else above is someone else's work.
 
-**Install**:
+- **`ai-config-audit`** — 22 checks over both hosts' config. See [`docs/config-audit-and-sync.md`](docs/config-audit-and-sync.md).
+- **Reviewer agents** — `codex-reviewer`, `coderabbit-reviewer`, `kimi-reviewer`, `glm-reviewer` (plus `gemini-reviewer`, **out of rotation**, ad-hoc only).
+- **`chatgpt-planner`** — the OpenAI business/strategy planning voice. Planning only, never a reviewer.
+- **Role agents** — `planner`, `architect`, `code-reviewer`, `security-reviewer`, `database-reviewer`, `python-reviewer`, `go-reviewer`, `build-error-resolver`, `go-build-resolver`, `refactor-cleaner`, `doc-updater`, `e2e-runner`, `harness-optimizer`, `loop-operator`, `chief-of-staff`.
 
+---
+
+## 9. Built into the harness
+
+These ship with Claude Code — nothing to install, listed so you don't go looking: `dataviz`, `artifact-design`, `artifact-capabilities`, `update-config`, `keybindings-help`, `simplify`, `fewer-permission-prompts`, `loop`, `schedule`, `claude-api`, `run`, `security-review`, `init`.
+
+---
+
+## Turning skills off
+
+`skillOverrides` in `~/.claude/settings.json` disables a skill without uninstalling it:
+
+```json
+{
+  "skillOverrides": {
+    "swift-concurrency-6-2": "off",
+    "ios-qa": "off",
+    "docker-patterns": "off"
+  }
+}
 ```
-# Inside a Claude session:
-/plugin marketplace add nextlevelbuilder/ui-ux-pro-max-skill
-/plugin install ui-ux-pro-max@ui-ux-pro-max-skill
-```
 
-Or CLI: `uipro init --ai claude`
+**63 of the installed skills are disabled this way in the source setup** — every iOS, Swift, Go, and Django skill, plus most of the agentic-orchestration set. They stay installed so they're one config edit away when a project needs them, and cost nothing while off.
 
-- `ui-ux-pro-max` — Activates on UI/UX requests; includes a "Design System Generator" reasoning engine
+This is the honest counterweight to a 150-skill inventory: the *installed* count is not the *active* count, and only the active count matters. Prune aggressively.
 
 ---
 
-## 10. Apple-platform — 6 skills (source unclear)
+## Minimum viable setup
 
-These all live in `~/.claude/skills/` but don't carry an `origin:` field. They look like a community Swift collection or are sub-skills of an ECC bundle. Check the relevant skill's `SKILL.md` for current install info, or try the ECC marketplace first.
+The shortest list that captures most of the value:
 
-- `swiftui-patterns` — SwiftUI architecture, `@Observable`, navigation, performance
-- `swift-concurrency-6-2` — Swift 6.2 Approachable Concurrency, `@concurrent`
-- `swift-protocol-di-testing` — Protocol-based DI for testable Swift
-- `swift-actor-persistence` — Thread-safe persistence using actors
-- `foundation-models-on-device` — Apple FoundationModels framework (iOS 26+)
-- `liquid-glass-design` — iOS 26 Liquid Glass design system (SwiftUI / UIKit / WidgetKit)
+1. **`superpowers`** (plugin) — process discipline: brainstorm → plan → TDD → verify
+2. **`search-first`** (ECC) — check for prior art before writing code
+3. **`gstack`** — if you do web work; the QA browser daemon alone justifies it
+4. **This repo's reviewer agents** — the actual cross-vendor gate
+5. **`product-marketing`** — only if you write marketing copy
 
----
-
-## 11. Other / custom
-
-- `visa-doc-translate` — Niche: translate visa application documents (images) into bilingual PDFs. Custom-looking, no clear upstream — may be author-original or a one-off marketplace skill.
-- `share-setup` — Custom local skill (lives in `~/.claude/skills/share-setup/`) that exports a setup doc. Generic enough that it's not BB-specific.
-
----
-
-## Tldr — minimum viable setup
-
-If you only want 8 skills (instead of all 85), start here:
-
-1. **`using-superpowers`** (obra) — required by other superpowers skills
-2. **`writing-plans`** + **`executing-plans`** (obra) — the plan/execute split
-3. **`test-driven-development`** (obra) — TDD enforcer
-4. **`systematic-debugging`** (obra) — no fix without root cause
-5. **`verification-before-completion`** (obra) — evidence before claims
-6. **`frontend-design`** (Anthropic-official) — if you do any UI work
-7. **`configure-ecc`** (ECC) — the marketplace installer for adding more ECC skills as you find friction
-
-The rules + hooks in **this** repo work without any of the above. Add skills as you find friction the rules don't address.
+Everything else: wait for friction, then install the thing that removes it.

@@ -8,11 +8,13 @@
 
 The harness enforces this:
 
-1. **SessionStart hook** (`scripts/claude-hooks/auto-worktree.sh`) auto-creates `/tmp/${PROJECT_SLUG}-auto-<date>-<pid>` on every session in canonical and instructs the model to `cd` there. Symlinks `node_modules`, `.env`, `.env.local`, build output dirs, etc. from canonical so build/test/dev work in the worktree without reinstalling.
+1. **SessionStart hook** (`scripts/claude-hooks/auto-worktree.sh`) auto-creates `~/.agent-worktrees/wt-auto-<date>-<pid>` on every session in canonical and instructs the model to `cd` there (override the base with `WORKTREE_BASE`). The base must NOT be under `/tmp/` — macOS wipes it on reboot, and that wipe has destroyed uncommitted work. Symlinks `node_modules`, `.env`, `.env.local`, build output dirs, etc. from canonical so build/test/dev work in the worktree without reinstalling.
 2. **PreToolUse hook** (`scripts/claude-hooks/track-git-cwd.sh`) blocks `git add` / `commit` / `cherry-pick` / `reset --hard` / `restore` / `rebase` / `merge` / `stash` / `rm` in canonical with exit code 2 when ≥2 sessions are alive. The error message names the exact worktree path the session should `cd` into (read from the registry). Solo sessions get a soft warning, not a block.
 3. **PreToolUse hook** (`scripts/claude-hooks/check-remote-push.sh`) blocks `git push` to shared branches (typically `main` and your deploy targets) when local HEAD is behind remote, and blocks all `--force` / `--force-with-lease` to those branches.
 4. **SessionEnd hook** (`scripts/claude-hooks/cleanup-on-session-end.sh`) cleans the worktree on exit per a 4-state machine: clean+merged → delete; clean+unpushed → review queue; dirty → auto-stash + delete; untracked-only → move to orphan dir + delete.
-5. **Hourly idle reaper** (launchd) catches sessions that crashed without firing SessionEnd. **Daily janitor** (04:00) prunes anything older than 3 days and deletes merged `wt/auto-*` branches.
+5. **Hourly idle reaper** (launchd) catches sessions that crashed without firing SessionEnd. **Daily janitor** (04:00) prunes anything older than 3 days and deletes merged `wt/auto-*` branches. **Known limitation:** macOS TCC blocks launchd-spawned bash from reading scripts under `~/Downloads`, `~/Documents`, or `~/Desktop`, which silently breaks both reapers — grant `/bin/bash` Full Disk Access, or keep the repo elsewhere. The SessionEnd hook is unaffected (it runs as a child of your `claude` process).
+
+⚠️ **Auto-worktrees branch from your STALE local main** — the hook does not fetch. Run `git rev-list --count main..origin/main` before investigating a bug or opening a PR.
 
 ### Slash commands
 

@@ -5,9 +5,8 @@
 //
 // Source: adapted from gsd-build/get-shit-done's gsd-read-injection-scanner.js (MIT).
 // Changes vs upstream:
-//   - Excluded paths tuned for typical Claude Code usage (~/.claude/* subdirs,
-//     CLAUDE.md, MEMORY.md, project memory dirs, project-level security/migration
-//     scripts that legitimately document these patterns).
+//   - Excluded paths tuned for this user's setup (~/.claude/* subdirs, CLAUDE.md,
+//     MEMORY.md, project memory dirs, <project> security/migration scripts)
 //
 // Triggers on: Read tool PostToolUse events
 // Action: Advisory warning (never blocks)
@@ -53,8 +52,14 @@ function isExcludedPath(filePath) {
   if (/^(CLAUDE|MEMORY)\.md$/i.test(base)) return true;
   // Memory directories
   if (/\/\.claude\/projects\/[^/]+\/memory\//.test(p)) return true;
-  // Project security / migration / docs subdirs commonly contain pattern docs
-  if (/\/(?:scripts|server\/security|docs)\//.test(p) && /\.(md|txt|sh|py|ts|js)$/i.test(p)) return true;
+  // Your own repo's doc/security/migration trees, which legitimately quote
+  // injection patterns. Set AI_TRUSTED_DOC_PATHS to a regex to add your own,
+  // e.g. AI_TRUSTED_DOC_PATHS='/my-repo/(scripts|docs|server/security)/'
+  if (process.env.AI_TRUSTED_DOC_PATHS) {
+    try {
+      if (new RegExp(process.env.AI_TRUSTED_DOC_PATHS).test(p)) return true;
+    } catch { /* a bad regex must never block a Read */ }
+  }
   // Generic security-doc paths
   if (/[\/\\](?:security|techsec|injection|prompt-guard)[\/\\.]/i.test(p)) return true;
   // GSD's .planning/ — legacy harmless exclusion

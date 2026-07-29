@@ -10,7 +10,9 @@ Solutions exist (manually create worktrees per session, use VS Code workspaces, 
 
 ## What this harness enforces
 
-1. **SessionStart hook**: every Claude session in the canonical repo gets auto-redirected to a fresh git worktree at `/tmp/<slug>-auto-<date>-<pid>` on branch `wt/auto-<id>`. Build dependencies (`node_modules`, build output, `.env` files) are symlinked from canonical so the worktree builds and tests without reinstalling.
+1. **SessionStart hook**: every Claude session in the canonical repo gets auto-redirected to a fresh git worktree at `~/.agent-worktrees/wt-auto-<date>-<pid>` on branch `wt/auto-<id>`. Build dependencies (`node_modules`, build output, `.env` files) are symlinked from canonical so the worktree builds and tests without reinstalling. Override the base with `WORKTREE_BASE`.
+
+   🔴 **The base must not be under `/tmp/`.** It originally was, and macOS wipes `/tmp/` on reboot — that wipe destroyed uncommitted work in a live incident. The scripts still *recognize* legacy `/tmp/wt-auto-*` paths so in-flight sessions can be cleaned up, but nothing new is created there. If you adapt this harness, keep the base somewhere reboot-survivable.
 
 2. **PreToolUse hook on `git`**: blocks `git add` / `commit` / `cherry-pick` / `reset --hard` / `restore` / `rebase` / `merge` / `stash` / `rm` in the canonical working tree with exit code 2 — but ONLY when ≥2 Claude sessions are alive. Solo sessions get a soft warning, not a hard block. The error message names the exact worktree path the session should `cd` into (read from a per-host registry).
 
@@ -37,6 +39,7 @@ Solutions exist (manually create worktrees per session, use VS Code workspaces, 
 ```
 
 What it does:
+
 1. Copies the 12 hook scripts into `<your-repo>/scripts/claude-hooks/`.
 2. Prints a `CLAUDE.md` fragment for you to paste into `<your-repo>/CLAUDE.md`.
 3. Wires the SessionStart, PreToolUse, SessionEnd hooks into `<your-repo>/.claude/settings.local.json` (per-project settings — does NOT touch user-level `~/.claude/settings.json`).
@@ -51,6 +54,19 @@ Additionally installs the hourly idle-reaper + daily-janitor launchd jobs (macOS
 
 Re-runnable. `--dry-run` previews. `--uninstall` reverses.
 
+### 🔴 macOS TCC silently breaks the launchd safety net
+
+If your repo lives under a TCC-protected directory — `~/Downloads`, `~/Documents`, `~/Desktop` — macOS blocks launchd-spawned `bash` from reading scripts there. Both reapers fail silently: the jobs are loaded, they "run", and they do nothing.
+
+The fix is a one-time **Full Disk Access** grant for `/bin/bash` (System Settings → Privacy & Security → Full Disk Access). Or move the repo somewhere unprotected, e.g. `~/src/`.
+
+The SessionEnd hook is unaffected — it runs as a child of your `claude` process, which already has TCC permission. So the *common* path keeps working and only the crash-recovery path is dead, which is exactly the shape of failure you don't notice until you need it. Verify after install:
+
+```bash
+launchctl list | grep -i worktree      # loaded?
+tail ~/.claude/logs/*idle-reaper*.log   # actually doing anything?
+```
+
 ## Restart any open Claude sessions
 
 The auto-worktree hook only fires on session start. After install, existing sessions won't see it until they restart.
@@ -59,6 +75,18 @@ The auto-worktree hook only fires on session start. After install, existing sess
 
 - `STAY_IN_CANONICAL=1 claude` — skip auto-worktree for read-only research sessions. The git-mutation block still warns.
 - Run `git push --force` etc. yourself in a terminal **outside Claude** when you genuinely need to bypass the push guard. The hook only affects Claude Code's Bash invocations.
+
+## 🔴 Auto-worktrees branch from a STALE local main
+
+The SessionStart hook does not fetch before creating the worktree. If your canonical checkout's local `main` is behind `origin/main`, every session that day starts from stale code — and you will diagnose bugs that were fixed upstream a week ago, or open a PR whose diff includes changes that already landed.
+
+Check before investigating anything or opening a PR:
+
+```bash
+git rev-list --count main..origin/main    # must be 0
+```
+
+(The version of the hook shipped here prints a warning and branches from the remote when it detects this, but confirm rather than assume — an older copy may not.)
 
 ## Recovery
 

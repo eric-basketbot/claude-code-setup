@@ -1,39 +1,59 @@
 # <Project Name> — Claude Memory
 
-> **How to use:** Each topic has its own folder with atomic notes. Add new memories under the right folder, then add a one-line pointer to this index. Keep total index under 200 lines (auto-load cap).
+> **This file is a ROUTER.** The harness loads only its first ~200 lines / 25KB; treat 14KB as the warning line.
+>
+> **NEVER append detail here.** Write the detail file in its topic folder, add a link line to that folder's `index.md`, and add a line below ONLY if it is a red-flag rule (state the rule in ≤1 line; the *why* lives in the linked file).
+>
+> Three tiers: `MEMORY.md` (router) → `<topic>/index.md` (folder index) → `<topic>/<note>.md` (the fact).
 
 ## User
 
-- (1-line facts about you that change how Claude should work with you)
-- See [user/](user/) for behavioral preferences
+- (1-line facts about you that change how Claude should work with you — role, expertise, how much explanation you want, what to never ask permission for)
+- Full preferences: [user/index.md](user/index.md)
 
-## Quick Reference (always-apply facts)
+## 🔴 Red flags (always-apply)
 
-- (Cross-cutting facts that should ALWAYS be in context. Examples:)
-- **Default branch**: `main`
-- **Production URL**: `<your-domain>`
-- **DB**: (driver, version, conn-string shape)
-- **Test command**: `<your test command>` — must pass before commit
-- **Deploy**: `<your deploy script or workflow>`
+> One line each. These are rules that are actively expensive to get wrong — the kind where the failure is silent or the recovery is painful. If a rule doesn't clear that bar, it belongs in a folder index, not here.
+>
+> Delete these examples and write your own.
 
-## Universal Rules (cross-cutting, always apply)
+**Git & sessions**
 
-> One line each, link to the topic file under the right folder. Add new rules here as they accumulate.
+- Never edit the canonical checkout directly — every session works in its own worktree.
+- Check the branch before EVERY commit; `git stash` is GLOBAL across worktrees.
+- The full test suite is MANDATORY before commit, with results shown.
 
-- [Example rule](infrastructure/example-rule.md) — one-line hook with the punchline
+**Build & deploy**
 
-## Topics (drill-in)
+- Staging before production; production needs explicit confirmation.
+- (The one command that looks safe and destroys something — name it here.)
 
-- [User preferences](user/) — how to communicate, format, defer
-- [Feedback log](feedback/) — corrections + validated approaches with `Why` and `How to apply`
-- [Project state](project/) — current initiatives, deadlines, decisions
-- [Infrastructure](infrastructure/) — VPS, DB, deploy, env quirks
-- [Frontend](frontend/) — UI conventions, framework gotchas
-- [Testing](testing/) — test patterns, flaky quarantine notes
-- [Security](security/) — auth, crypto, PII handling
-- [Reference](reference/) — pointers to external systems
-- [Completed](completed/) — archived initiatives, kept for context
+**Data & correctness**
+
+- (The domain rule that keeps getting violated — e.g. "IDs are scoped per tenant, never match across tenants".)
+- (The policy number that a doc states wrongly — e.g. "the window is 6 months, not 12; the code is the source of truth".)
+
+**Security**
+
+- Secrets pasted in chat are compromised — rotate, never echo or write them.
+- (Where credentials actually live.)
+
+## Routing — open the folder's `index.md` BEFORE working that area
+
+- [infrastructure/index.md](infrastructure/index.md) — hosting, DB, deploy, env quirks
+- [frontend/index.md](frontend/index.md) — UI conventions, framework gotchas
+- [testing/index.md](testing/index.md) — test patterns, quarantine conventions
+- [security/index.md](security/index.md) — auth, crypto, PII handling
+- [meta/index.md](meta/index.md) — the harness itself, session hygiene, reviewer quirks
+- [user/index.md](user/index.md) — preferences and working style
+- [completed/index.md](completed/index.md) — shipped archive
+
+## Active / in-flight
+
+- (Current initiative — one line, with a link to the project note. Include absolute dates, never "last week".)
 
 ---
 
-_The audit hook (`~/.claude/hooks/memory_health_audit.py`) writes its report to `meta/memory_health_report.md` every 12 hours. Run `python3 ~/.claude/hooks/memory_health_audit.py` (no flag) for a dry-run report any time._
+_The audit hook (`~/.claude/hooks/memory_health_audit.py`) writes its report to `meta/memory_health_report.md` every 12 hours. Run it with no flag any time for a dry-run report._
+
+_Missing a memory? **Grep `memory-repository/` first** — it was probably quarantined, not deleted._

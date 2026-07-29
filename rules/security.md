@@ -7,7 +7,7 @@ paths:
 ---
 # TypeScript/JavaScript Security
 
-> This file extends [common/security.md](../common/security.md) with TypeScript/JavaScript specific content.
+> This file extends `security.md` with TypeScript/JavaScript specific content.
 
 ## Secret Management
 

@@ -1,13 +1,20 @@
 # claude-code-setup
 
-A drop-in Claude Code customization pack. Not skills — **rules, hooks, agents, settings wiring, and a memory-system architecture** that change how Claude Code operates.
+A drop-in customization pack for Claude Code. Not skills — **rules, agents, hooks, wrappers, settings wiring, a memory architecture, and a config audit** that change how the harness operates.
 
-The headline pieces:
+Everything here runs in production daily against a real codebase. Paths are genericized; nothing is aspirational.
 
-1. **3-vendor adversarial review gate** — every non-trivial change goes through Claude + Codex (OpenAI) + CodeRabbit (purpose-built review pipeline) at planning, post-implementation, and pre-commit. Cross-harness diversity catches what single-model review misses.
-2. **File-based memory system** — atomic notes per topic, an auto-loaded index file, and a lifecycle hook that quarantines stale notes, rotates session logs, and snapshots conversations every 15 min so cross-session recall survives context compaction.
-3. **Write-time injection guards** — Node hooks scan every Write/Edit and every Read for prompt-injection patterns (especially the kind designed to survive context compression).
-4. **Multi-session worktree harness** *(optional, per-project)* — when you run multiple Claude sessions against the same repo, each gets its own auto-named git worktree, with hooks that block direct edits to canonical, manage cleanup, and prevent destructive pushes to shared branches.
+> **Updated 2026-07-28.** The review panel grew from 3 vendors to 5, planning switched from voting to editorial harvest, and four subsystems were added (implementation fallback, config audit + Codex sync, Keychain credential broker, cross-host shared contract). See [`CHANGELOG.md`](CHANGELOG.md) for the full delta.
+
+## The five headline pieces
+
+1. **Five-vendor adversarial review gate.** Every non-trivial change is scrutinized by Claude + Codex (OpenAI) + Kimi (Moonshot) + GLM (Zhipu) + CodeRabbit, at three hard gates. Different weights *and* different harnesses — that combination is what catches blind spots a single model shares with itself.
+2. **Planning by editorial harvest, not consensus.** Four models write *independent* plans; one host steelmans each and grafts the best pieces into one. Voting discards minority insight, and the best idea is often in the plan the others disagree with.
+3. **A shared contract both hosts obey.** Claude and Codex load the same `rules/multi-ai-harness.md`, which is the single authority on panel rosters, model waterfalls, and the permission matrix. Host-specific docs defer to it on conflict, so the two assistants can't drift apart.
+4. **Config audit + one-way Codex sync.** `audit.py` runs 22 checks over both hosts' rules, skills, hooks, plugins, credentials, and memory; `sync-ai-config.py` generates Codex's `AGENTS.md` from Claude-owned sources so there is exactly one place to edit a rule.
+5. **Multi-session worktree harness** *(optional, per-project)*. Parallel Claude sessions each get their own auto-named git worktree, with hooks that block edits to canonical, guard shared-branch pushes, and clean up on exit.
+
+Plus the pieces that were already here and still earn their place: file-based memory with an auto-curating lifecycle, prompt-injection guards on every Write and Read, and a Keychain broker so no MCP server ever sees a plaintext token.
 
 ## Install
 
@@ -18,76 +25,114 @@ cd claude-code-setup
 ./install.sh                  # actually install
 ```
 
-The installer:
+The installer backs up `~/.claude/settings.json`, copies `rules/ agents/ hooks/ scripts/ skills/ ai-config/` into `~/.claude/`, installs the `wrappers/` into `~/.local/bin/`, and merges hook wiring into settings (deduped by command, never doubled).
 
-1. Backs up `~/.claude/settings.json` first.
-2. Copies `rules/`, `agents/`, `hooks/`, `scripts/` into `~/.claude/` (skips existing files unless you pass `--force`).
-3. Merges the hook wiring into `~/.claude/settings.json` (deduped by command, won't add the same hook twice).
-4. Optionally creates a memory skeleton for a project with `--bootstrap-project /path/to/repo`.
-
-After install:
+Then wire up the vendors you actually want — **the pack degrades gracefully, a missing vendor just shrinks the panel**:
 
 ```bash
-codex login                                            # for the codex-reviewer agent
-coderabbit auth login                                  # for the coderabbit-reviewer agent
-# AND install https://github.com/apps/coderabbitai on your repo's GitHub org
+codex login                                  # OpenAI — reviewer + technical planner
+coderabbit auth login                        # CodeRabbit — pre-commit reviewer
+#   ALSO install https://github.com/apps/coderabbitai on your repo's GitHub org.
+#   CLI auth alone is NOT enough; without the App you get
+#   "could not connect this repository to a CodeRabbit organization".
+kimi login                                   # Moonshot — reviewer + planner
+security add-generic-password -U -a "$(id -un)" \
+  -s ai-config.myproject.ZAI_API_KEY -w      # Zhipu/GLM — see docs/secrets.md
+```
 
-# Optional — per project — the multi-session worktree harness:
+⚠️ On that last command, **`-w` must be the final argument with nothing after it** so `security` prompts you twice instead of reading the key from argv. A flag placed after `-w` is silently stored *as* the password — the old `-w -U` ordering saved the literal string `-U` with exit 0, no prompt and no error.
+
+Optional, per project:
+
+```bash
 ./project-overlay/multi-session-worktrees/install-in-project.sh /path/to/your/repo
 ```
 
-Restart any active Claude Code sessions to pick up the new rules and hooks.
+Restart active Claude sessions to pick up new rules and hooks. Verify with:
+
+```bash
+python3 ~/.claude/skills/ai-config-audit/scripts/audit.py
+```
 
 ## What's in this repo
 
-```
-rules/                      always-on instructions Claude loads every session
-├── codex-adversarial-review.md   the flagship 3-vendor review gate
-├── development-workflow.md       research-first + planner + TDD + review pipeline
+```text
+rules/                       always-on instructions, loaded every session
+├── multi-ai-harness.md          ★ THE SHARED CONTRACT — panel rosters, model
+│                                  waterfalls, permission matrix, quorum table.
+│                                  Loaded by BOTH Claude and Codex. Overrides
+│                                  every other doc on conflict. Edit facts HERE.
+├── codex-adversarial-review.md   Claude's orchestration procedure for the gates
+├── opus-fallback-implementation.md  who writes code when the host model degrades
+├── development-workflow.md       research-first → plan → TDD → review → commit
 ├── agents.md                     which subagent to use when
-├── git-workflow.md, performance.md, ...
+└── coding-style / git-workflow / hooks / patterns / performance / security / testing
 
-agents/                     subagents the rules call into
-├── codex-reviewer.md             wraps `codex exec review`
-└── coderabbit-reviewer.md        wraps `coderabbit review --plain`
+agents/                      subagents the rules dispatch to
+├── codex-reviewer.md             wraps `codex exec review`      (OpenAI)
+├── coderabbit-reviewer.md        wraps `coderabbit review`      (AST + lint + repo context)
+├── kimi-reviewer.md              wraps `kimi-review`            (Moonshot)
+├── glm-reviewer.md               wraps `glm-review`             (Zhipu)
+└── chatgpt-planner.md            wraps `chatgpt-plan`  — PLANNING ONLY, never a reviewer
 
-hooks/                      enforced operating principles
-├── memory_health_audit.py        quarantine stale memory, rotate logs (launchd)
-├── session_snapshot.py           15-min rolling snapshots (UserPromptSubmit)
-├── precompact_session_log.py     breadcrumb on every compact (PreCompact)
-├── cc-write-injection-guard.js   block prompt-injection patterns on Write/Edit
-├── cc-context-monitor.js         context-usage telemetry (PostToolUse)
-├── cc-read-injection-scanner.js  scan Read results for injection (PostToolUse)
-└── cc-statusline.js              statusline renderer
+wrappers/                    the read-only harnesses those agents call
+├── kimi-review                   runs Kimi in a disposable worktree; size-scaled
+│                                 timeouts + slice-on-timeout recovery
+├── glm-review                    runs `claude` against z.ai's Anthropic-compatible
+│                                 endpoint; read-only via tool allowlist + external cwd
+└── chatgpt-plan                  business/strategy planning voice on the ChatGPT
+                                  subscription (not the metered platform API)
 
 scripts/
-└── cross-ai-review.sh            manual 3-vendor review aggregator
+├── cross-ai-review.sh            manual aggregator — all vendors, one diff
+├── codex-implementation-fallback.sh   the ONLY sanctioned workspace-write dispatch
+├── keychain-exec.sh              allowlisted Keychain → env broker for MCP servers
+└── sync-ai-config.py             generate Codex AGENTS.md from Claude-owned sources
 
-memory-system/              templates for the file-based memory architecture
-├── MEMORY.md.template            index file Claude auto-loads each session
-├── memory-tree.txt               recommended directory layout
-└── README.md                     full architecture + lifecycle docs
+skills/ai-config-audit/      22 checks across both hosts; report-only, never
+                             emits a credential value
 
-project-overlay/
-└── multi-session-worktrees/      per-project: git worktree harness
-    ├── install-in-project.sh
-    ├── scripts/ (12 .sh files)
-    ├── CLAUDE.md.fragment        paste into your project's CLAUDE.md
-    └── launchd/ (plist templates for idle-reaper + daily-janitor)
+ai-config/                   templates for the sync manifest + topology graph
 
-settings.json.fragment      merged into ~/.claude/settings.json
-install.sh                  the user-level installer
-sanitize-check.sh           pre-commit gate against project-specific leakage
-docs/                       deeper writeups of each headline piece
-upstream-skills.md          manifest of skills referenced but not redistributed
-CREDITS.md                  attribution
-LICENSE
+hooks/
+├── memory_health_audit.py        quarantine stale memory, rotate logs (launchd)
+├── session_snapshot.py           rolling snapshots     (UserPromptSubmit)
+├── precompact_session_log.py     breadcrumb per compact (PreCompact)
+├── cc-write-injection-guard.js   block injection patterns on Write/Edit
+├── cc-read-injection-scanner.js  scan Read results for injection (PostToolUse)
+├── cc-context-monitor.js         context-usage telemetry (PostToolUse)
+└── cc-statusline.js              statusline renderer
+
+memory-system/               templates for the router-style memory architecture
+project-overlay/             per-project: the multi-session worktree harness
+docs/                        deeper writeups — start with docs/quickstart.md
+upstream-skills.md           the ~150 skills installed but not redistributed
 ```
 
-## What's NOT here (and where to get it)
+## Read next
 
-This repo doesn't redistribute upstream marketplace skills (ECC, Anthropic-official, gstack, plankton, bencium, etc.). See [`upstream-skills.md`](upstream-skills.md) for the install commands. The setup works fine without them — the rules and hooks are self-contained.
+| If you want… | Read |
+|---|---|
+| A day-one install path | [`docs/quickstart.md`](docs/quickstart.md) |
+| How the three gates actually fire | [`docs/review-panel.md`](docs/review-panel.md) |
+| Why planning harvests instead of votes | [`docs/planning-by-harvest.md`](docs/planning-by-harvest.md) |
+| What happens when the host model degrades | [`docs/implementation-fallback.md`](docs/implementation-fallback.md) |
+| Keeping Claude and Codex from drifting apart | [`docs/config-audit-and-sync.md`](docs/config-audit-and-sync.md) |
+| Where credentials live and why | [`docs/secrets.md`](docs/secrets.md) |
+| The memory architecture | [`docs/memory-system.md`](docs/memory-system.md) |
+| Parallel sessions on one repo | [`docs/multi-session-worktrees.md`](docs/multi-session-worktrees.md) |
+| Which skills and plugins are installed | [`upstream-skills.md`](upstream-skills.md) |
+
+## Adopt it in pieces
+
+The pack is deliberately separable. In rough order of value-per-minute-of-setup:
+
+1. **Worktree harness** — costs nothing, blocks the most expensive class of mistake (one session committing another's staged work).
+2. **The review gate with whatever vendors you already pay for.** Two vendors beats one; five is better but not required. Start with Claude + Codex.
+3. **Injection guards** — two hook files, no configuration.
+4. **Memory system** — pays off after a few weeks, not on day one.
+5. **Config audit + Codex sync** — only worth it once you actually run two assistants.
 
 ## License
 
-MIT for the rules / hooks / scripts authored in this repo. See [`CREDITS.md`](CREDITS.md) for upstream attributions.
+MIT for everything authored here. See [`CREDITS.md`](CREDITS.md) for upstream attributions, and [`upstream-skills.md`](upstream-skills.md) for skills referenced but not redistributed.

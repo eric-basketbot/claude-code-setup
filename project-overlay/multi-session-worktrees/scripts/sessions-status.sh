@@ -35,9 +35,13 @@ else
     if [[ -d "$path" ]]; then
       DIRTY_COUNT="$(git -C "$path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
     fi
+    # Commits unique to this session, measured against BOTH local main and
+    # origin/main. Worktrees branch from origin/main when canonical is behind
+    # (2026-07-25), so the old `main..HEAD` would print canonical's lag as if the
+    # session had written that many commits.
     AHEAD=0
-    if [[ -d "$path" ]] && git -C "$path" rev-parse --verify --quiet refs/heads/main >/dev/null 2>&1; then
-      AHEAD="$(git -C "$path" rev-list --count "main..HEAD" 2>/dev/null || echo 0)"
+    if [[ -d "$path" ]]; then
+      AHEAD="$(bb_unique_commits_ahead "$path" HEAD || echo 0)"
     fi
     PURPOSE_PROMPT=""
     if [[ -f "$path/${PURPOSE_FILE_NAME}" ]]; then
@@ -145,7 +149,7 @@ fi
 echo
 echo "=== WEEK SUMMARY ==="
 echo
-GIT_LOG="${LOG_DIR}/${PROJECT_SLUG}-git-cwd.jsonl"
+GIT_LOG="${LOG_DIR}/myproject-git-cwd.jsonl"
 WEEK_AGO="$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "1970-01-01T00:00:00Z")"
 
 BLOCKED=0
@@ -170,7 +174,7 @@ printf '  blocked-in-canonical: %s   warned-in-canonical: %s   worktrees-cleaned
 
 echo
 echo "Logs:"
-echo "  ~/.claude/logs/${PROJECT_SLUG}-git-cwd.jsonl       — every git mutation attempt"
-echo "  ~/.claude/logs/${PROJECT_SLUG}-worktree-cleanup.log — cleanup actions"
-echo "  ~/.claude/logs/${PROJECT_SLUG}-review-queue.log     — branches awaiting review"
-echo "  ~/.claude/logs/${PROJECT_SLUG}-orphan-files/        — recovered untracked files"
+echo "  ~/.claude/logs/myproject-git-cwd.jsonl       — every git mutation attempt"
+echo "  ~/.claude/logs/myproject-worktree-cleanup.log — cleanup actions"
+echo "  ~/.claude/logs/myproject-review-queue.log     — branches awaiting review"
+echo "  ~/.claude/logs/myproject-orphan-files/        — recovered untracked files"

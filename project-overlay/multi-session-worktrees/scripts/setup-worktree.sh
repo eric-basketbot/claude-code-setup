@@ -13,7 +13,7 @@
 #      the worktree stays tiny.
 #   2. Write WORKTREE_PURPOSE.md so /sessions and the track-git-cwd "teach"
 #      message can identify the worktree's claude session and intent.
-#   3. Add a line to the global registry at /tmp/${PROJECT_SLUG}-auto-registry.txt so
+#   3. Add a line to the global registry at /tmp/wt-auto-registry.txt so
 #      hooks running in any session can answer "what worktree is my claude
 #      session assigned to".
 

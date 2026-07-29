@@ -6,16 +6,10 @@ memory/meta/session_snapshots/<session_id>.md. Also appends a breadcrumb line
 to memory/meta/session_log.md.
 
 Fast-exits in <5ms when throttle says "not yet," so repeated prompts are cheap.
-No-ops for any cwd whose project does not have a memory/ directory bootstrapped.
-Never blocks: any error exits 0.
-
-Project resolution: derives the per-project Claude data dir from the hook
-payload's `cwd` field via the standard slug encoding (`-Users-foo-Proj`). Skips
-silently if no memory/ exists under that dir.
+No-ops for any cwd outside the bound project. Never blocks: any error exits 0.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
@@ -24,11 +18,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INTERVAL_SECONDS = 15 * 60  # 15 minutes
-MAX_MESSAGES = 40
-MAX_CHARS_PER_MESSAGE = 2000
+MAX_MESSAGES = 40           # last N user+assistant messages in snapshot
+MAX_CHARS_PER_MESSAGE = 2000  # truncate very long messages in snapshot
 
-PROJECTS_BASE = Path.home() / ".claude" / "projects"
-HOOKS_DIR = Path.home() / ".claude" / "hooks"
+# ---- project binding -------------------------------------------------------
+# Point this at YOUR repo. Claude Code stores per-project state under
+# ~/.claude/projects/<abs-path-with-slashes-replaced-by-dashes>/, so the slug is
+# derived rather than hardcoded. Override with AI_MEMORY_PROJECT_ROOT.
+PROJECT_ROOT = Path(
+    os.environ.get("AI_MEMORY_PROJECT_ROOT", str(Path.home() / "src/your-project"))
+).expanduser()
+PROJECT_NAME = PROJECT_ROOT.name
+PROJECT_DIR = (
+    Path.home() / ".claude" / "projects" / str(PROJECT_ROOT).replace("/", "-")
+)
+MEMORY_DIR = PROJECT_DIR / "memory"
+SNAPSHOT_DIR = MEMORY_DIR / "meta" / "session_snapshots"
+LOG_FILE = MEMORY_DIR / "meta" / "session_log.md"
+THROTTLE_FILE = Path("$HOME/.claude/hooks/.ai_session_save_ts")
 
 LOG_HEADER = (
     "---\n"
@@ -40,29 +47,10 @@ LOG_HEADER = (
 )
 
 
-def _project_slug(cwd: str) -> str:
-    """Encode a project root path as Claude's directory slug: /Users/foo/Bar -> -Users-foo-Bar."""
-    return "-" + cwd.strip("/").replace("/", "-")
-
-
-def _resolve_memory_dir(cwd: str) -> Path | None:
-    """Return the memory dir for this cwd, or None if not bootstrapped."""
-    if not cwd:
-        return None
-    slug = _project_slug(cwd)
-    memdir = PROJECTS_BASE / slug / "memory"
-    return memdir if memdir.exists() else None
-
-
-def _throttle_path(cwd: str) -> Path:
-    """Per-project throttle file — keyed on a short hash of cwd."""
-    h = hashlib.sha1(cwd.encode("utf-8")).hexdigest()[:12]
-    return HOOKS_DIR / f".session_save_ts.{h}"
-
-
-def _throttle_elapsed(throttle: Path) -> bool:
+def _throttle_elapsed() -> bool:
+    """Return True if it's been >= INTERVAL_SECONDS since last save (or never)."""
     try:
-        age = time.time() - throttle.stat().st_mtime
+        age = time.time() - THROTTLE_FILE.stat().st_mtime
         return age >= INTERVAL_SECONDS
     except FileNotFoundError:
         return True
@@ -70,11 +58,11 @@ def _throttle_elapsed(throttle: Path) -> bool:
         return False
 
 
-def _touch_throttle(throttle: Path) -> None:
+def _touch_throttle() -> None:
     try:
-        throttle.parent.mkdir(parents=True, exist_ok=True)
-        throttle.touch()
-        os.utime(throttle, None)
+        THROTTLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        THROTTLE_FILE.touch()
+        os.utime(THROTTLE_FILE, None)
     except Exception:
         pass
 
@@ -95,6 +83,7 @@ def _extract_text(content) -> str:
 
 
 def _collect_messages(transcript_path: str, limit: int) -> list[tuple[str, str]]:
+    """Return the last `limit` (role, text) pairs from the transcript."""
     if not transcript_path:
         return []
     p = Path(transcript_path)
@@ -127,10 +116,10 @@ def _collect_messages(transcript_path: str, limit: int) -> list[tuple[str, str]]
     return msgs[-limit:]
 
 
-def _write_snapshot(snapshot_dir: Path, session_id: str, msgs: list[tuple[str, str]]) -> None:
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
+def _write_snapshot(session_id: str, msgs: list[tuple[str, str]]) -> None:
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    fname = snapshot_dir / f"{today}_{session_id[:8]}.md"
+    fname = SNAPSHOT_DIR / f"{today}_{session_id[:8]}.md"
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     lines = [
@@ -153,15 +142,15 @@ def _write_snapshot(snapshot_dir: Path, session_id: str, msgs: list[tuple[str, s
     fname.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _append_breadcrumb(log_file: Path, session_id: str, message_count: int, topic: str) -> None:
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    if not log_file.exists():
-        log_file.write_text(LOG_HEADER, encoding="utf-8")
+def _append_breadcrumb(session_id: str, message_count: int, topic: str) -> None:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not LOG_FILE.exists():
+        LOG_FILE.write_text(LOG_HEADER, encoding="utf-8")
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     topic = topic.replace("\n", " ").replace("|", "/")
     if len(topic) > 80:
         topic = topic[:77] + "..."
-    with log_file.open("a", encoding="utf-8") as f:
+    with LOG_FILE.open("a", encoding="utf-8") as f:
         f.write(
             f"- {ts} | session={session_id[:8]} | checkpoint=interval"
             f" | messages={message_count} | topic={topic}\n"
@@ -169,6 +158,9 @@ def _append_breadcrumb(log_file: Path, session_id: str, message_count: int, topi
 
 
 def main() -> int:
+    if not _throttle_elapsed():
+        return 0
+
     try:
         raw = sys.stdin.read()
     except Exception:
@@ -179,12 +171,7 @@ def main() -> int:
         return 0
 
     cwd = payload.get("cwd", "") or ""
-    memdir = _resolve_memory_dir(cwd)
-    if memdir is None:
-        return 0
-
-    throttle = _throttle_path(cwd)
-    if not _throttle_elapsed(throttle):
+    if PROJECT_NAME not in cwd:
         return 0
 
     session_id = (payload.get("session_id") or "unknown")
@@ -192,17 +179,18 @@ def main() -> int:
 
     msgs = _collect_messages(transcript_path, MAX_MESSAGES)
     if not msgs:
-        _touch_throttle(throttle)
+        # nothing to snapshot yet, but still touch throttle so we don't retry every prompt
+        _touch_throttle()
         return 0
 
     try:
-        _write_snapshot(memdir / "meta" / "session_snapshots", session_id, msgs)
+        _write_snapshot(session_id, msgs)
         first_user = next((t for r, t in msgs if r == "user"), "")
-        _append_breadcrumb(memdir / "meta" / "session_log.md", session_id, len(msgs), first_user)
+        _append_breadcrumb(session_id, len(msgs), first_user)
     except Exception:
         return 0
     finally:
-        _touch_throttle(throttle)
+        _touch_throttle()
 
     return 0
 
