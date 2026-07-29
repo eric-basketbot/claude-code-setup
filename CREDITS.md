@@ -15,7 +15,7 @@ This repo packages original rules + hooks + scripts. It builds on, integrates wi
 - **gsd-build / get-shit-done** — the original prompt-injection scanners (`gsd-read-injection-scanner.js`) were the starting point for the `cc-*-injection-*.js` hooks. The hooks here are adapted from that work and remain MIT-licensed.
 - **bencium plugins** — additional design + UX skills referenced from there.
 - **plankton** — write-time formatter/linter pattern; the `plankton-code-quality` skill is upstream.
-- **hookify** — the user-facing hook configuration plugin; referenced in `settings.json` but not redistributed here.
+- **hookify** — Anthropic's user-configurable hook plugin; referenced in `settings.json` but not redistributed here. Install with `/plugin install hookify@claude-plugins-official`. https://github.com/anthropics/claude-plugins-public/tree/main/plugins/hookify
 
 ## What's original in this repo
 

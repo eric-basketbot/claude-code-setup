@@ -1,5 +1,5 @@
 {
-  "_comment": "Merged into ~/.claude/settings.json by install.sh. Wires ONLY the 4 JS + 2 Python hooks and the statusline that ship in this repo. Plugin-based hooks (hookify, security-guidance, etc.) are NOT here — install those plugins separately. __HOME__ is expanded by install.sh to your actual $HOME. The merge dedupes by command string, so re-running install.sh never doubles a hook.",
+  "_comment": "Merged into ~/.claude/settings.json by install.sh. Wires ONLY the 4 JS + 2 Python hooks and the statusline that ship in this repo. Plugin-based hooks (hookify, security-guidance, etc.) are NOT here — install those separately, e.g. `/plugin install hookify@claude-plugins-official`. __HOME__ is expanded by install.sh to your actual $HOME. The merge dedupes by command string, so re-running install.sh never doubles a hook.",
   "_note_statusLine": "install.sh only sets statusLine if you do not already have one — it will not clobber an existing statusline.",
   "hooks": {
     "PreToolUse": [
