@@ -171,9 +171,23 @@ These ship with Claude Code — nothing to install, listed so you don't go looki
 }
 ```
 
-**63 of the installed skills are disabled this way in the source setup** — every iOS, Swift, Go, and Django skill, plus most of the agentic-orchestration set. They stay installed so they're one config edit away when a project needs them, and cost nothing while off.
+**63 of the 148 installed skills are disabled this way in the source setup** — 26 ECC, 20 gstack, 17 other. Every iOS, Swift, and Go skill, plus most of the agentic-orchestration set. They stay installed so they're one config edit away when a project needs them, and cost nothing while off.
 
-This is the honest counterweight to a 150-skill inventory: the *installed* count is not the *active* count, and only the active count matters. Prune aggressively.
+That 43% is the result of a deliberate pruning pass, not neglect — the working set is **85 active skills**. Every override maps to a skill that still exists on disk (no orphaned entries), which is worth verifying occasionally:
+
+```bash
+python3 - <<'PY'
+import json, pathlib
+s = json.load(open(pathlib.Path.home()/'.claude/settings.json')).get('skillOverrides', {})
+off = {k for k, v in s.items() if v == 'off'}
+sk = pathlib.Path.home()/'.claude/skills'
+print('disabled:', len(off), '| orphaned overrides:', sorted(n for n in off if not (sk/n).exists()))
+PY
+```
+
+An orphaned override is harmless but it means you uninstalled a skill and left the tombstone behind — over time those accumulate and make the config lie about what's actually installed.
+
+This is the honest counterweight to a large inventory: the *installed* count is not the *active* count, and only the active count matters. Prune aggressively, then verify the pruning is real.
 
 ---
 
