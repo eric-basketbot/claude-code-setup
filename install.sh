@@ -9,7 +9,7 @@
 #   rules/{development-workflow,agents,git-workflow,performance,...}.md
 #   agents/{codex,coderabbit,kimi,glm}-reviewer.md   the review panel
 #   agents/chatgpt-planner.md                business/strategy planning voice
-#   skills/ai-config-audit/                  22-check config audit
+#   skills/ai-config-audit/                  20-check config audit
 #   ai-config/*.template                     sync manifest + topology templates
 #   scripts/codex-implementation-fallback.sh the ONLY workspace-write dispatch
 #   scripts/keychain-exec.sh                 Keychain -> env broker for MCP

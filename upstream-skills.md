@@ -4,9 +4,9 @@
 
 This repo ships **rules, hooks, agents, wrappers, and scripts**. It does **not** redistribute anyone else's skills. This file is the honest inventory of what's installed alongside it, grouped by source, with real install commands.
 
-**Don't install all of it.** The working set is ~150 skills accumulated over months; most are stack-specific and irrelevant to you. The rules and hooks in this repo work with zero of them. Add skills when you hit friction the rules don't address — that's the only signal worth acting on.
+**Don't install all of it.** The inventory is 148 skills accumulated over months (85 active, 63 disabled); most are stack-specific and irrelevant to you. The rules and hooks in this repo work with zero of them. Add skills when you hit friction the rules don't address — that's the only signal worth acting on.
 
-> One caution before bulk-installing: every enabled skill's *description* is loaded into context so the model can decide whether to invoke it. A hundred irrelevant skills is a permanent context tax and a permanent source of wrong-skill invocations. See [Turning skills off](#turning-skills-off) — in the source setup, **63 of the installed skills are explicitly disabled**.
+> One caution before bulk-installing: every enabled skill's *description* is loaded into context so the model can decide whether to invoke it. A hundred irrelevant skills is a permanent context tax and a permanent source of wrong-skill invocations. See [Turning skills off](#turning-skills-off) — in the source setup, **63 of the 148 installed skills are explicitly disabled**.
 
 ---
 
@@ -144,7 +144,7 @@ npx skills add https://github.com/vercel-labs/agent-skills --skill composition-p
 
 These are in this repo. Everything else above is someone else's work.
 
-- **`ai-config-audit`** — 22 checks over both hosts' config. See [`docs/config-audit-and-sync.md`](docs/config-audit-and-sync.md).
+- **`ai-config-audit`** — 20 checks over both hosts' config. See [`docs/config-audit-and-sync.md`](docs/config-audit-and-sync.md).
 - **Reviewer agents** — `codex-reviewer`, `coderabbit-reviewer`, `kimi-reviewer`, `glm-reviewer` (plus `gemini-reviewer`, **out of rotation**, ad-hoc only).
 - **`chatgpt-planner`** — the OpenAI business/strategy planning voice. Planning only, never a reviewer.
 - **Role agents** — `planner`, `architect`, `code-reviewer`, `security-reviewer`, `database-reviewer`, `python-reviewer`, `go-reviewer`, `build-error-resolver`, `go-build-resolver`, `refactor-cleaner`, `doc-updater`, `e2e-runner`, `harness-optimizer`, `loop-operator`, `chief-of-staff`.

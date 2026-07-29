@@ -50,7 +50,7 @@ See [`docs/implementation-fallback.md`](docs/implementation-fallback.md).
 
 ### New: config audit + one-way Codex sync
 
-`skills/ai-config-audit/` runs 22 checks over rules, skills, hooks, plugins, credentials, and memory across both hosts. `scripts/sync-ai-config.py` generates Codex's `AGENTS.md` from Claude-owned sources, with a content digest so hand-edits are detectable.
+`skills/ai-config-audit/` runs 20 checks over rules, skills, hooks, plugins, credentials, and memory across both hosts. `scripts/sync-ai-config.py` generates Codex's `AGENTS.md` from Claude-owned sources, with a content digest so hand-edits are detectable.
 
 🔴 **`0 findings; 0 failed checks` is also the output of an audit that silently didn't run.** That fail-open signature is real and it happened. Prove liveness with a planted canary before believing a green result.
 

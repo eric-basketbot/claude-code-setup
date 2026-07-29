@@ -11,7 +11,7 @@ Everything here runs in production daily against a real codebase. Paths are gene
 1. **Five-vendor adversarial review gate.** Every non-trivial change is scrutinized by Claude + Codex (OpenAI) + Kimi (Moonshot) + GLM (Zhipu) + CodeRabbit, at three hard gates. Different weights *and* different harnesses — that combination is what catches blind spots a single model shares with itself.
 2. **Planning by editorial harvest, not consensus.** Four models write *independent* plans; one host steelmans each and grafts the best pieces into one. Voting discards minority insight, and the best idea is often in the plan the others disagree with.
 3. **A shared contract both hosts obey.** Claude and Codex load the same `rules/multi-ai-harness.md`, which is the single authority on panel rosters, model waterfalls, and the permission matrix. Host-specific docs defer to it on conflict, so the two assistants can't drift apart.
-4. **Config audit + one-way Codex sync.** `audit.py` runs 22 checks over both hosts' rules, skills, hooks, plugins, credentials, and memory; `sync-ai-config.py` generates Codex's `AGENTS.md` from Claude-owned sources so there is exactly one place to edit a rule.
+4. **Config audit + one-way Codex sync.** `audit.py` runs 20 checks over both hosts' rules, skills, hooks, plugins, credentials, and memory; `sync-ai-config.py` generates Codex's `AGENTS.md` from Claude-owned sources so there is exactly one place to edit a rule.
 5. **Multi-session worktree harness** *(optional, per-project)*. Parallel Claude sessions each get their own auto-named git worktree, with hooks that block edits to canonical, guard shared-branch pushes, and clean up on exit.
 
 Plus the pieces that were already here and still earn their place: file-based memory with an auto-curating lifecycle, prompt-injection guards on every Write and Read, and a Keychain broker so no MCP server ever sees a plaintext token.
@@ -89,7 +89,7 @@ scripts/
 ├── keychain-exec.sh              allowlisted Keychain → env broker for MCP servers
 └── sync-ai-config.py             generate Codex AGENTS.md from Claude-owned sources
 
-skills/ai-config-audit/      22 checks across both hosts; report-only, never
+skills/ai-config-audit/      20 checks across both hosts; report-only, never
                              emits a credential value
 
 ai-config/                   templates for the sync manifest + topology graph
@@ -106,7 +106,7 @@ hooks/
 memory-system/               templates for the router-style memory architecture
 project-overlay/             per-project: the multi-session worktree harness
 docs/                        deeper writeups — start with docs/quickstart.md
-upstream-skills.md           the ~150 skills installed but not redistributed
+upstream-skills.md           the 148 skills installed but not redistributed
 ```
 
 ## Read next

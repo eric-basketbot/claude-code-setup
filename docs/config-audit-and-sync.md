@@ -72,15 +72,15 @@ python3 ~/.claude/skills/ai-config-audit/scripts/audit.py --project-root /abs/pa
 
 Exit codes: `0` clean, `1` findings, `2` incomplete audit or configuration error.
 
-The 22 checks, grouped:
+The 20 checks, grouped:
 
 | Group | Checks |
 |---|---|
-| Rules | `manifest_completeness`, `generated_drift`, `panel_version`, `known_stale_content` |
-| Skills | `frontmatter`, `broken_link`, `duplicate_name`, `asset_references`, `codex_topology`, `compatibility_root`, `project_local` |
-| Harness | `shared_contract`, `roles.mapping`, `hooks.wiring`, `plugins.required`, `settings.json`, `config.toml` |
-| Security | `config_files`, `runtime_scope`, `artifact_residue` |
-| Memory | `boundary`, `health` |
+| Rules | `rules.manifest_completeness`, `rules.generated_drift`, `rules.panel_version`, `rules.known_stale_content` |
+| Skills | `skills.frontmatter`, `skills.broken_link`, `skills.duplicate_name`, `skills.asset_references`, `skills.codex_topology`, `skills.compatibility_root`, `skills.project_local` |
+| Harness | `harness.shared_contract`, `roles.mapping`, `hooks.wiring`, `plugins.required` |
+| Security | `security.config_files`, `security.runtime_scope`, `security.artifact_residue` |
+| Memory | `memory.boundary`, `memory.health` |
 
 **Output contract:** findings carry only a rule ID, severity, path, line number, and a safe classification. Secret bytes, hashes, lengths, snippets, and raw subprocess output are forbidden — an audit that leaks the credential it's warning about is worse than no audit. In `--json` mode, stdout is exactly one JSON document.
 
